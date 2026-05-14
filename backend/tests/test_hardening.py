@@ -82,25 +82,39 @@ def _build_settings(monkeypatch: MonkeyPatch, **overrides: str) -> Settings:
     return Settings()
 
 
-def test_dictionary_phrase_jwt_secret_rejected_in_production(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """A passphrase that happens to be 43 chars and contains valid base64
-    characters will decode to ~33 bytes via base64url. Format + length
-    alone is not enough — we also reject low-entropy decoded payloads
-    that look like text rather than crypto material."""
-    with pytest.raises(ValueError, match="low Shannon entropy"):
-        _build_settings(
-            monkeypatch,
-            JWT_SECRET="the-quick-brown-fox-jumps-over-the-lazy-dog",
-        )
-
-
 def test_repeating_pattern_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
     """Same-prefix-repeated values decode to highly repetitive bytes — even
-    if technically 32+ bytes, the entropy check catches them."""
-    with pytest.raises(ValueError, match=r"low Shannon entropy|strong secret format"):
+    if technically 32+ bytes, the entropy check catches them. `"abcdef" * 10`
+    base64-decodes with Shannon entropy ~3.17 bits/byte, well below 4.5."""
+    with pytest.raises(ValueError, match=r"Shannon entropy|strong secret format"):
         _build_settings(monkeypatch, JWT_SECRET="abcdef" * 10)  # 60 chars
+
+
+# Note: pangram passphrases like "the-quick-brown-fox-jumps-over-the-lazy-dog"
+# actually base64-decode to high-entropy bytes (~4.88 bits/byte, comparable
+# to genuinely random material) because the input uses many distinct chars.
+# Mechanical Shannon-entropy checks cannot distinguish a well-distributed
+# passphrase from real random output at the 32-byte sample scale; the gate
+# catches obvious low-entropy inputs only. The defense against memorable-
+# but-public passphrases is the user choosing a real RNG source — the error
+# message points them at `openssl rand -hex 32` / `secrets.token_urlsafe(32)`.
+
+
+def test_all_zero_hex_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
+    """64 hex zeros pass format + length but decode to 32 zero bytes
+    (entropy = 0). Previously slipped through because the hex path
+    skipped entropy entirely — same class of bug as the fox-phrase
+    finding on the base64 side."""
+    with pytest.raises(ValueError, match=r"low-entropy|trivial pattern"):
+        _build_settings(monkeypatch, JWT_SECRET="0" * 64)
+
+
+def test_alternating_hex_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
+    """`"01" * 32` is 64 hex chars decoding to 32 bytes of 0x01 — same
+    entropy = 0 problem as all-zeros. Catches the most obvious
+    'looks-hex but is trivial' shape."""
+    with pytest.raises(ValueError, match=r"low-entropy|trivial pattern"):
+        _build_settings(monkeypatch, JWT_SECRET="01" * 32)
 
 
 def test_short_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
@@ -123,12 +137,14 @@ def test_strong_hex_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
     assert settings.environment == Environment.PROD
 
 
-def test_strong_base64_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
-    # 32 random bytes base64-encoded — what `openssl rand -base64 32` produces.
-    # 32 bytes encodes to 44 base64 chars (including `=` padding).
+def test_strong_standard_base64_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
+    """Real `openssl rand -base64 32` output — uses + / = chars rather
+    than the URL-safe - _ alphabet. Same decoded bytes as the urlsafe
+    case below, just standard-base64-encoded. This is the test that was
+    previously passing a HEX value despite the name suggesting base64."""
     settings = _build_settings(
         monkeypatch,
-        JWT_SECRET="3f9a17ce4d2b48a1c0e7f63bda5912f48e6c0a9d7b2e54f1c8a3d6094e7b1c2f",
+        JWT_SECRET="P4Pp/oQu/xKgFXm7tdH8d+LnGRoT0HzEv3JFwUuq7Aw=",
     )
     assert settings.environment == Environment.PROD
 
@@ -158,6 +174,50 @@ def test_local_env_still_accepts_placeholders(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("JWT_SECRET", "dev-only-REPLACE_ME_with_openssl_rand_hex_32")
     # Should not raise.
     Settings()
+
+
+# ── provider-mode startup guards ───────────────────────────────────────
+
+
+def test_mock_provider_rejected_in_production_by_default(monkeypatch: MonkeyPatch) -> None:
+    """A production deploy with AI_PROVIDER_MODE=mock would silently
+    serve canned marketing JSON to real users. Reject at startup unless
+    ALLOW_MOCK_PROVIDER=true is explicitly set."""
+    with pytest.raises(ValueError, match="AI_PROVIDER_MODE=mock is not allowed"):
+        _build_settings(
+            monkeypatch,
+            AI_PROVIDER_MODE="mock",
+            OPENAI_API_KEY="",  # mock doesn't need a key; clearing avoids confusion
+        )
+
+
+def test_mock_provider_allowed_in_production_with_escape_hatch(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """The ALLOW_MOCK_PROVIDER escape hatch keeps the demo-on-staging
+    flow alive without leaving the door open by default."""
+    settings = _build_settings(
+        monkeypatch,
+        AI_PROVIDER_MODE="mock",
+        ALLOW_MOCK_PROVIDER="true",
+        OPENAI_API_KEY="",
+    )
+    assert settings.ai_provider_mode.value == "mock"
+
+
+def test_bedrock_provider_rejected_at_startup(monkeypatch: MonkeyPatch) -> None:
+    """The factory is lazy — without this guard, a misconfigured
+    AI_PROVIDER_MODE=bedrock deploy stays healthy at startup and only
+    explodes at first generation request. Fail at startup instead."""
+    with pytest.raises(ValueError, match="bedrock is documented but not implemented"):
+        _build_settings(monkeypatch, AI_PROVIDER_MODE="bedrock")
+
+
+def test_local_env_allows_mock_without_escape_hatch(monkeypatch: MonkeyPatch) -> None:
+    """The whole point of mock-mode is `local` — no escape hatch needed there."""
+    monkeypatch.setenv("ENVIRONMENT", "local")
+    monkeypatch.setenv("AI_PROVIDER_MODE", "mock")
+    Settings()  # should not raise
 
 
 # ── request_id propagation on success paths ───────────────────────────
@@ -224,6 +284,18 @@ def test_valid_ip_rejects_junk() -> None:
     assert _valid_ip("'; DROP TABLE users; --") is None
     assert _valid_ip("") is None
     assert _valid_ip(None) is None
+
+
+def test_valid_ip_rejects_scoped_ipv6() -> None:
+    """Python's `ipaddress` parses `fe80::1%eth0` since 3.9, but the
+    scope id reflects the caller's interface — useless for audit and
+    incompatible with some Postgres INET versions. Reject explicitly."""
+    from app.api.v1.routers.auth import _valid_ip
+
+    assert _valid_ip("fe80::1%eth0") is None
+    assert _valid_ip("fe80::1%0") is None
+    # Unscoped IPv6 link-local is still acceptable.
+    assert _valid_ip("fe80::1") == "fe80::1"
 
 
 # ── Login timing parity (smoke — exact parity is impossible, but we ───

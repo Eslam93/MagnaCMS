@@ -61,12 +61,21 @@ def _client_user_agent(request: Request) -> str | None:
 
 
 def _valid_ip(candidate: str | None) -> str | None:
-    """Return `candidate` only if it parses as a real IP, else None."""
+    """Return `candidate` only if it parses as a real IP, else None.
+
+    Scoped IPv6 addresses (e.g. `fe80::1%eth0`) are rejected explicitly.
+    Python's `ipaddress` parses them since 3.9, but the scope id reflects
+    the *caller's* local interface, which is meaningless audit signal and
+    inconsistent across Postgres `INET` versions. We require unscoped
+    addresses only.
+    """
     if not candidate:
         return None
     try:
-        ipaddress.ip_address(candidate)
+        parsed = ipaddress.ip_address(candidate)
     except ValueError:
+        return None
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.scope_id is not None:
         return None
     return candidate
 

@@ -52,6 +52,9 @@ async def test_non_local_env_emits_hsts(monkeypatch: MonkeyPatch) -> None:
     settings = Settings(
         environment=Environment.PROD,
         ai_provider_mode=AIProviderMode.MOCK,
+        # Mock-in-prod now requires the explicit escape hatch (P1.10).
+        # We're testing HSTS, not provider validation, so flip it on.
+        allow_mock_provider=True,
         jwt_secret=SecretStr("3f9a17ce4d2b48a1c0e7f63bda5912f48e6c0a9d7b2e54f1c8a3d6094e7b1c2f"),
     )
     # Patch at the use sites — security_headers imports the symbol, so
