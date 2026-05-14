@@ -1,8 +1,10 @@
 """Health endpoint. Reports service version and downstream-dep status.
 
-Real dependency checks attach as the components they depend on land
-(DB in P1.2, OpenAI in P1.7, Redis in P11.x). Until then the report is
-static and clearly marked `unknown`.
+Probes attach as the components they depend on land:
+  - ``db``     — real ``SELECT 1`` probe (wired in P1.2)
+  - ``openai`` — real probe (wired in P1.7)
+  - ``redis``  — real probe (wired in P11.x)
+Unwired probes report ``unknown``.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.db.session import check_db_health
 
 router = APIRouter(tags=["system"])
 
@@ -40,7 +43,9 @@ class HealthResponse(BaseModel):
 )
 async def health() -> HealthResponse:
     settings = get_settings()
+    db_state: DependencyState = "ok" if await check_db_health() else "down"
     return HealthResponse(
         version=settings.app_version,
         environment=settings.environment.value,
+        dependencies=DependencyStatus(db=db_state),
     )

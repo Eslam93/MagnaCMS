@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from httpx import AsyncClient
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
 
 
 async def test_health_returns_ok(client: AsyncClient) -> None:
@@ -14,6 +19,25 @@ async def test_health_returns_ok(client: AsyncClient) -> None:
     assert "environment" in body
     assert "dependencies" in body
     assert set(body["dependencies"].keys()) == {"db", "redis", "openai"}
+
+
+async def test_health_reports_db_ok_when_reachable(client: AsyncClient) -> None:
+    # The conftest autouse fixture stubs the probe to True.
+    response = await client.get("/api/v1/health")
+    assert response.status_code == 200
+    assert response.json()["dependencies"]["db"] == "ok"
+
+
+async def test_health_reports_db_down_when_unreachable(
+    client: AsyncClient, monkeypatch: MonkeyPatch
+) -> None:
+    async def _down() -> bool:
+        return False
+
+    monkeypatch.setattr("app.api.v1.routers.health.check_db_health", _down)
+    response = await client.get("/api/v1/health")
+    assert response.status_code == 200
+    assert response.json()["dependencies"]["db"] == "down"
 
 
 async def test_health_echoes_incoming_request_id(client: AsyncClient) -> None:

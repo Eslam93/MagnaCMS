@@ -12,6 +12,9 @@ dependencies = [
     "pydantic[email]>=2.9,<3",
     "pydantic-settings>=2.6,<3",
     "structlog>=24.4,<25",
+    "sqlalchemy[asyncio]>=2.0.35,<3",
+    "asyncpg>=0.30,<1",
+    "alembic>=1.14,<2",
 ]
 
 [dependency-groups]

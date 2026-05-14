@@ -3,11 +3,29 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
+
+
+@pytest.fixture(autouse=True)
+def stub_dependency_probes(monkeypatch: MonkeyPatch) -> None:
+    """Default-mock every downstream probe so unit tests don't need live deps.
+
+    Individual tests can opt out by re-patching the probe to return False
+    (see `tests/test_health.py::test_health_reports_db_down_when_unreachable`).
+    """
+
+    async def _ok() -> bool:
+        return True
+
+    monkeypatch.setattr("app.api.v1.routers.health.check_db_health", _ok)
 
 
 @pytest.fixture
