@@ -1,9 +1,11 @@
 """Runtime configuration sourced from environment variables and `.env`.
 
 All settings are validated at startup. Placeholder secrets are accepted in
-local/dev environments to keep onboarding cheap, but rejected in
-staging/production by a model validator — the service refuses to boot
-rather than silently running with insecure defaults.
+the `local` environment only — every other env (dev, staging, production)
+is treated as protected. A model validator rejects weak JWT secrets,
+missing OpenAI keys, and `AI_PROVIDER_MODE` values that aren't
+production-ready, so a misconfigured deploy refuses to boot rather than
+silently running with insecure defaults or serving canned content.
 """
 
 from __future__ import annotations

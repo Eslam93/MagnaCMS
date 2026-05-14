@@ -31,19 +31,42 @@ def _unique_email() -> str:
     return f"user-{uuid.uuid4().hex[:12]}@example.test"
 
 
+# Precomputed bcrypt hash so tests that don't care about password
+# verification can skip the ~250ms bcrypt cost per `make_user` call.
+# Computed once at import time, cached for the suite. Tests that DO
+# exercise login pass `password=` explicitly to force a fresh real hash.
+_PRECOMPUTED_PASSWORD_HASH: str | None = None
+
+
+def _default_password_hash() -> str:
+    global _PRECOMPUTED_PASSWORD_HASH
+    if _PRECOMPUTED_PASSWORD_HASH is None:
+        _PRECOMPUTED_PASSWORD_HASH = hash_password("Secret123")
+    return _PRECOMPUTED_PASSWORD_HASH
+
+
 def make_user(
     *,
     email: str | None = None,
-    password: str = "Secret123",
+    password: str | None = None,
     full_name: str = "Test User",
     email_verified: bool = False,
 ) -> User:
-    """Build an unsaved User. Password is bcrypt-hashed (slow — call
-    sparingly in tight test loops)."""
+    """Build an unsaved User.
+
+    When `password` is None (default), the user gets a precomputed
+    bcrypt hash — fast, but can't authenticate against any specific
+    plaintext other than "Secret123". Use for tests that just need a
+    User row to exist.
+
+    When `password` is provided, bcrypt-hash it fresh (~250ms). Required
+    for tests that hit `/auth/login` and expect verification.
+    """
+    password_hash = _default_password_hash() if password is None else hash_password(password)
     user = User(
         id=uuid.uuid4(),
         email=email or _unique_email(),
-        password_hash=hash_password(password),
+        password_hash=password_hash,
         full_name=full_name,
     )
     if email_verified:
@@ -55,12 +78,16 @@ async def create_user_in_db(
     session: AsyncSession,
     *,
     email: str | None = None,
-    password: str = "Secret123",
+    password: str | None = None,
     full_name: str = "Test User",
     email_verified: bool = False,
 ) -> User:
     """Build and flush a User into the test session. Returns the
-    flushed object with its server-assigned columns populated."""
+    flushed object with its server-assigned columns populated.
+
+    Inherits `make_user`'s precomputed-hash-by-default behavior.
+    Pass `password=` only if the test verifies that specific password.
+    """
     user = make_user(
         email=email,
         password=password,

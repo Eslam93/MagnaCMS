@@ -122,18 +122,24 @@ async def test_mock_image_returns_valid_png_bytes() -> None:
     assert result.image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-async def test_mock_image_default_size_is_1024_square() -> None:
+async def test_mock_image_reports_actual_1x1_dimensions() -> None:
+    """The embedded PNG is 1×1. Reporting fake 1024×1024 would lie to
+    downstream code (S3 upload, dimension probing). The mock reports
+    what's actually in the bytes."""
     provider = MockImageProvider()
     result = await provider.generate(prompt="x")
-    assert result.width == 1024
-    assert result.height == 1024
+    assert result.width == 1
+    assert result.height == 1
 
 
-async def test_mock_image_honors_requested_size() -> None:
+async def test_mock_image_ignores_requested_size() -> None:
+    """The `size` kwarg is kept for interface parity with the OpenAI
+    provider but doesn't change the returned dimensions — the bytes
+    are fixed."""
     provider = MockImageProvider()
     result = await provider.generate(prompt="x", size=(512, 256))
-    assert result.width == 512
-    assert result.height == 256
+    assert result.width == 1
+    assert result.height == 1
 
 
 async def test_mock_image_zero_cost_and_zero_latency() -> None:

@@ -16,7 +16,7 @@ from typing import Any, Final
 import openai
 from openai import AsyncOpenAI
 
-from app.core.config import get_settings
+from app.core.config import Environment, get_settings
 from app.core.logging import get_logger
 from app.providers.errors import ProviderConfigError, ProviderError, ProviderRetryExhausted
 from app.providers.image.base import ImageQuality, ImageResult
@@ -24,7 +24,7 @@ from app.providers.image.base import ImageQuality, ImageResult
 log = get_logger(__name__)
 
 # USD per image at 1024×1024. Hand-maintained — sync when OpenAI ships
-# a new price sheet.
+# a new price sheet. Local: log + zero. Non-local: refuse to serve.
 _PRICE_PER_IMAGE: Final[dict[tuple[str, ImageQuality], float]] = {
     ("gpt-image-1", ImageQuality.LOW): 0.011,
     ("gpt-image-1", ImageQuality.MEDIUM): 0.042,
@@ -35,7 +35,17 @@ _PRICE_PER_IMAGE: Final[dict[tuple[str, ImageQuality], float]] = {
 def _compute_cost_usd(model: str, quality: ImageQuality) -> float:
     price = _PRICE_PER_IMAGE.get((model, quality))
     if price is None:
-        log.warning("openai_image_unknown_pricing", model=model, quality=quality.value)
+        if get_settings().environment != Environment.LOCAL:
+            raise ProviderConfigError(
+                f"No pricing entry for image model={model!r} quality="
+                f"{quality.value!r}. Update _PRICE_PER_IMAGE before deploying "
+                "with this configuration."
+            )
+        log.warning(
+            "openai_image_unknown_pricing_local_only",
+            model=model,
+            quality=quality.value,
+        )
         return 0.0
     return price
 

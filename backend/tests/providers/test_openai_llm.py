@@ -57,9 +57,24 @@ def test_compute_cost_usd_for_known_model() -> None:
     assert cost == pytest.approx((1000 * 0.15 + 500 * 0.60) / 1_000_000)
 
 
-def test_compute_cost_usd_for_unknown_model_returns_zero() -> None:
-    # Unknown models log a warning but don't crash.
+def test_compute_cost_usd_for_unknown_model_returns_zero_in_local() -> None:
+    # Default test env is `local`, where unknown models log + return 0.0.
     assert _compute_cost_usd("future-model-not-priced", 1000, 500) == 0.0
+
+
+def test_compute_cost_usd_for_unknown_model_raises_in_non_local(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """In production-like environments, an unknown model is a
+    misconfiguration: silently losing cost accounting is worse than
+    refusing to serve. Force a non-local env and verify."""
+    from app.core.config import Environment, get_settings
+
+    monkeypatch.setattr(get_settings(), "environment", Environment.PROD)
+    from app.providers.errors import ProviderConfigError
+
+    with pytest.raises(ProviderConfigError, match="No pricing entry"):
+        _compute_cost_usd("future-model-not-priced", 1000, 500)
 
 
 # ── happy path ─────────────────────────────────────────────────────────
@@ -120,6 +135,63 @@ async def test_generate_omits_response_format_when_schema_is_none() -> None:
     )
     kwargs = create_mock.call_args.kwargs
     assert "response_format" not in kwargs
+
+
+async def test_strict_schema_with_length_finish_reason_raises() -> None:
+    """Strict JSON schema + finish_reason=length means the JSON was
+    truncated mid-output. Returning success here would hand downstream
+    a malformed JSON string — service-layer fallback can't disambiguate
+    that from a model hallucination. Raise instead."""
+    create_mock = AsyncMock(
+        return_value=_build_fake_response(content='{"partial', finish_reason="length")
+    )
+    client = _build_fake_client(create_mock)
+    provider = OpenAIChatProvider(client=client)
+
+    with pytest.raises(ProviderError, match="finish_reason='length'"):
+        await provider.generate(
+            system_prompt="s",
+            user_prompt="u",
+            json_schema={"type": "object"},
+            content_type="blog_post",
+        )
+
+
+async def test_strict_schema_with_content_filter_finish_reason_raises() -> None:
+    """Content-filter on a strict-schema request means the model
+    redacted required fields. Same correctness gap as `length`."""
+    create_mock = AsyncMock(
+        return_value=_build_fake_response(content="", finish_reason="content_filter")
+    )
+    client = _build_fake_client(create_mock)
+    provider = OpenAIChatProvider(client=client)
+
+    with pytest.raises(ProviderError, match="content_filter"):
+        await provider.generate(
+            system_prompt="s",
+            user_prompt="u",
+            json_schema={"type": "object"},
+            content_type="blog_post",
+        )
+
+
+async def test_free_form_with_length_finish_reason_does_not_raise() -> None:
+    """When the caller didn't request structured output, finish_reason
+    other than `stop` is the caller's problem to interpret — don't
+    swallow valid partial responses behind a schema-strictness check."""
+    create_mock = AsyncMock(
+        return_value=_build_fake_response(content="partial", finish_reason="length")
+    )
+    client = _build_fake_client(create_mock)
+    provider = OpenAIChatProvider(client=client)
+
+    result = await provider.generate(
+        system_prompt="s",
+        user_prompt="u",
+        content_type="blog_post",
+    )
+    assert result.raw_text == "partial"
+    assert result.finish_reason == "length"
 
 
 # ── retry behavior ─────────────────────────────────────────────────────

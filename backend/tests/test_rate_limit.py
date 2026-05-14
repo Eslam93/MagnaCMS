@@ -139,3 +139,40 @@ async def test_envelope_has_request_id_key() -> None:
     body = json.loads(over.content)
     assert "meta" in body
     assert "request_id" in body["meta"]
+
+
+async def test_429_on_real_app_carries_security_headers_and_request_id() -> None:
+    """Regression for P1.11 #8: when the production middleware stack
+    rate-limits a request, the 429 must still carry the security
+    headers AND the bound request_id. Previously RateLimit was outside
+    SecurityHeaders and RequestID, so 429 responses dropped both."""
+    from app.main import app as real_app
+    from app.middleware.rate_limit import reset_rate_limit_state
+
+    reset_rate_limit_state()
+    incoming_id = "11111111-2222-3333-4444-555555555555"
+    async with AsyncClient(
+        transport=ASGITransport(app=real_app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as ac:
+        # /auth/register is capped at 10/min. Burst past the cap with
+        # bodies that all fail validation (no DB needed) so we trip
+        # the rate limit deterministically.
+        for _ in range(10):
+            await ac.post(
+                "/api/v1/auth/register",
+                json={},
+                headers={"X-Request-ID": incoming_id},
+            )
+        over = await ac.post(
+            "/api/v1/auth/register",
+            json={},
+            headers={"X-Request-ID": incoming_id},
+        )
+    assert over.status_code == 429
+    # Security headers attached even on the rate-limited path.
+    assert over.headers["x-content-type-options"] == "nosniff"
+    assert over.headers["x-frame-options"] == "DENY"
+    # request_id propagated into the envelope.
+    body = json.loads(over.content)
+    assert body["meta"]["request_id"] == incoming_id

@@ -236,6 +236,49 @@ async def test_request_id_echoed_on_success_path(client: AsyncClient) -> None:
     assert response.headers.get("X-Request-ID") == incoming
 
 
+async def test_request_id_oversized_is_replaced_with_uuid(client: AsyncClient) -> None:
+    """A 1000-char incoming X-Request-ID would inflate logs and storage.
+    Cap it; on invalid input the middleware mints a fresh UUID."""
+    long_id = "a" * 1000
+    response = await client.get(
+        "/api/v1/health",
+        headers={"X-Request-ID": long_id},
+    )
+    echoed = response.headers.get("X-Request-ID")
+    assert echoed is not None
+    assert echoed != long_id
+    # Default replacement is a UUID4 — 36 chars with dashes.
+    assert len(echoed) == 36
+
+
+async def test_request_id_control_chars_replaced_with_uuid(client: AsyncClient) -> None:
+    """Newlines / control chars in X-Request-ID enable log injection
+    (a forged 'second log line' from the attacker's perspective).
+    Reject and mint a fresh id."""
+    response = await client.get(
+        "/api/v1/health",
+        headers={"X-Request-ID": "valid\n[INJECTED] fake-log-line"},
+    )
+    echoed = response.headers.get("X-Request-ID")
+    assert echoed is not None
+    assert "\n" not in echoed
+    assert "INJECTED" not in echoed
+
+
+async def test_request_id_validator_accepts_typical_shapes() -> None:
+    """The validator must accept what honest clients actually send:
+    UUIDs, ULIDs, generic alphanumeric ids."""
+    from app.middleware.request_id import _is_valid_incoming
+
+    assert _is_valid_incoming("44444444-5555-6666-7777-888888888888")  # UUID
+    assert _is_valid_incoming("01F7Z9KH8XY3ABCDEF1234567890")  # ULID-like
+    assert _is_valid_incoming("trace-abc.123_xyz")  # generic
+    assert not _is_valid_incoming("")  # empty
+    assert not _is_valid_incoming("has space")  # space rejected
+    assert not _is_valid_incoming("has\nnewline")  # control char
+    assert not _is_valid_incoming("a" * 200)  # too long
+
+
 # Note: the unhandled-exception path's request_id propagation into the JSON
 # envelope is a known limitation — Starlette's per-route exception machinery
 # runs the handler in a context where our middleware's contextvar isn't
