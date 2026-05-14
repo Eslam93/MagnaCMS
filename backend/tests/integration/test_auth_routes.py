@@ -6,14 +6,13 @@ database stays clean and tests are order-independent.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_refresh_token
 from app.db.models import RefreshToken
+from tests.factories import create_refresh_token_in_db, create_user_in_db
 
 
 async def test_register_creates_user_and_issues_tokens(
@@ -293,15 +292,17 @@ async def test_refresh_with_expired_token_returns_401(
     integration_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """An expired refresh token must not refresh, even before it's revoked."""
-    raw = await _register_and_get_refresh(integration_client, email="harry@example.com")
-    # Force the stored row to be expired (1s ago).
-    token_hash = hash_refresh_token(raw)
-    row = (
-        await db_session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
-    ).scalar_one()
-    row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
-    await db_session.flush()
+    """An expired refresh token must not refresh, even before it's revoked.
+
+    Uses the factory directly to mint a pre-expired token in one call —
+    cleaner than registering via the endpoint and then mutating the row.
+    """
+    user = await create_user_in_db(db_session, email="harry@example.com")
+    _row, raw = await create_refresh_token_in_db(
+        db_session,
+        user=user,
+        expires_in_seconds=-1,
+    )
 
     response = await integration_client.post(
         "/api/v1/auth/refresh",
