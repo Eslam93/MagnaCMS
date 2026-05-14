@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_refresh_token
+from app.core.security import generate_refresh_token, hash_refresh_token
 from app.db.models import RefreshToken
 from tests.factories import create_refresh_token_in_db, create_user_in_db
 
@@ -408,3 +408,87 @@ async def test_logout_does_not_trigger_reuse_detection(
         cookies={"refresh_token": raw_b},
     )
     assert refresh.status_code == 200, refresh.text
+
+
+# ── concurrency: the atomic claim primitive under real parallel sessions ───
+#
+# Every other integration test in this file shares one transactional
+# session that rolls back on teardown — fast and isolated, but unable to
+# model real per-request commit visibility. The atomic UPDATE in
+# `RefreshTokenRepository.consume_if_active` is exactly the place where
+# the single-session model is misleading: it relies on row-level locking
+# across SEPARATE transactions. So this test deliberately bypasses the
+# `integration_client` + `db_session` fixtures and goes straight to the
+# engine, with explicit COMMITs and explicit cleanup. Slow by design;
+# it's the only test where that cost buys real signal.
+
+
+async def test_concurrent_refresh_only_one_session_wins(
+    integration_engine: object,  # AsyncEngine — typed loosely so pytest finds it
+) -> None:
+    """Two parallel `consume_if_active` calls on the same hash: the
+    atomic `UPDATE ... WHERE revoked_at IS NULL AND expires_at > now()
+    RETURNING user_id` must let exactly ONE caller claim the row.
+
+    Under Postgres `READ COMMITTED` (the default isolation level), the
+    second updater blocks on the row-level lock the first acquired,
+    then re-reads the row post-commit and sees its predicate is no
+    longer satisfied — so 0 rows match, RETURNING is empty, and the
+    second caller gets None. That's the linearization the primitive
+    is supposed to give us.
+    """
+    import asyncio
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+    from app.repositories.refresh_token_repository import RefreshTokenRepository
+
+    engine: AsyncEngine = integration_engine  # type: ignore[assignment]
+    _raw_token, hashed_token = generate_refresh_token()
+
+    # Setup: create a user + a single active refresh token, committed
+    # so both concurrent sessions can see it. `expire_on_commit=False`
+    # because we re-read attributes post-commit; the default would
+    # trigger a greenlet-bridged reload that fails outside the session.
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        user = await create_user_in_db(setup, email=f"race-{_uuid.uuid4().hex[:8]}@example.test")
+        target = RefreshToken(
+            user_id=user.id,
+            token_hash=hashed_token,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        setup.add(target)
+        await setup.commit()
+        user_id = user.id
+
+    try:
+        # Two independent sessions race for the same hash.
+        async def claim() -> _uuid.UUID | None:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                repo = RefreshTokenRepository(session)
+                claimed = await repo.consume_if_active(hashed_token)
+                await session.commit()
+                return claimed
+
+        results = await asyncio.gather(claim(), claim())
+        winners = [r for r in results if r is not None]
+        losers = [r for r in results if r is None]
+        assert len(winners) == 1, f"expected exactly one winner, got {results}"
+        assert len(losers) == 1, f"expected exactly one loser, got {results}"
+        assert winners[0] == user_id
+
+        # The target row is now revoked. A third sequential attempt to
+        # claim it must also miss — re-running the same hash never
+        # succeeds twice.
+        third = await claim()
+        assert third is None
+    finally:
+        async with AsyncSession(engine, expire_on_commit=False) as cleanup:
+            from app.db.models import User as UserModel
+
+            await cleanup.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+            await cleanup.execute(delete(UserModel).where(UserModel.id == user_id))
+            await cleanup.commit()

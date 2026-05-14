@@ -60,11 +60,21 @@ _JWT_SECRET_MIN_BYTES = 32
 _HEX_RE = re.compile(r"\A[0-9a-fA-F]+\Z")
 _BASE64_RE = re.compile(r"\A[A-Za-z0-9+/=_-]+\Z")
 
-# Shannon-entropy floor for decoded JWT-secret bytes. Random bytes
-# approach the theoretical max of 8 bits/byte (in practice 7.5+ for 32
-# bytes). English-text bytes top out around 4-5. We pick 5.0 — comfortably
-# above natural language, comfortably below random material.
-_JWT_SECRET_MIN_ENTROPY_BITS = 5.0
+# Shannon-entropy floor for decoded JWT-secret bytes.
+#
+# The empirical entropy of a 32-byte sample is bounded by log2(32) = 5.0
+# bits/byte — the maximum is only reached when every byte is unique.
+# Random 32 bytes uniformly drawn from 256 values typically have ~30
+# unique bytes (birthday paradox), so real `openssl rand -base64 32`
+# output sits around 4.85-4.95 bits/byte. A threshold of 5.0 was
+# rejecting half of legitimate random secrets.
+#
+# We pick 4.5 — comfortably above English text (~4.0-4.5) and the
+# obvious repeating-pattern failures, comfortably below the empirical
+# floor of true random 32-byte material. The hex path applies the same
+# check so `"0"*64` and `"01"*32` (which were previously accepted) now
+# fail.
+_JWT_SECRET_MIN_ENTROPY_BITS = 4.5
 
 
 def _shannon_entropy_bits_per_byte(data: bytes) -> float:
@@ -102,8 +112,17 @@ def _is_weak_jwt_secret(value: str) -> str | None:
         return "value is a placeholder"
 
     # Hex path: 2 hex chars per byte, so 32 bytes = 64 chars minimum.
+    # Apply the same entropy check the base64 path uses — otherwise
+    # `"0" * 64` and `"01" * 32` would slip through format+length alone.
     if _HEX_RE.fullmatch(value) and len(value) >= _JWT_SECRET_MIN_BYTES * 2:
-        return None
+        decoded_hex = bytes.fromhex(value)
+        if _shannon_entropy_bits_per_byte(decoded_hex) >= _JWT_SECRET_MIN_ENTROPY_BITS:
+            return None
+        return (
+            "value is the right hex length but decodes to a low-entropy payload "
+            "(repeated bytes or trivial pattern). Use `openssl rand -hex 32` "
+            "for real random material."
+        )
 
     # Base64 / base64url path — also requires the decoded bytes to look
     # like crypto material rather than English text that happens to be
@@ -147,6 +166,10 @@ class Settings(BaseSettings):
 
     # --- AI provider ---
     ai_provider_mode: AIProviderMode = AIProviderMode.OPENAI
+    # Escape hatch: allow AI_PROVIDER_MODE=mock outside `local`. Off by
+    # default so a misconfigured production deploy fails at startup
+    # rather than silently serving canned content to real users.
+    allow_mock_provider: bool = False
 
     # --- OpenAI ---
     openai_api_key: SecretStr | None = None
@@ -207,6 +230,25 @@ class Settings(BaseSettings):
                     f"OPENAI_API_KEY must be set when AI_PROVIDER_MODE=openai "
                     f"(environment={self.environment.value})"
                 )
+
+        # Eager provider-mode guards. The provider factory is lazy (builds
+        # on first call), so a misconfigured deploy would otherwise be
+        # healthy at startup and explode at first request. Move both
+        # "this mode can't actually work" checks here.
+        if self.ai_provider_mode == AIProviderMode.MOCK and not self.allow_mock_provider:
+            raise ValueError(
+                f"AI_PROVIDER_MODE=mock is not allowed in environment="
+                f"{self.environment.value}. Set ALLOW_MOCK_PROVIDER=true "
+                "to override (intended only for demo/staging environments, "
+                "never for real-user-facing traffic)."
+            )
+        if self.ai_provider_mode == AIProviderMode.BEDROCK:
+            raise ValueError(
+                "AI_PROVIDER_MODE=bedrock is documented but not implemented. "
+                "Either switch to AI_PROVIDER_MODE=openai (recommended) or "
+                "AI_PROVIDER_MODE=mock + ALLOW_MOCK_PROVIDER=true, or "
+                "implement the Bedrock providers before deploying with this mode."
+            )
         return self
 
 

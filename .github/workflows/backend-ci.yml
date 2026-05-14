@@ -22,6 +22,25 @@ jobs:
     defaults:
       run:
         working-directory: ./backend
+    services:
+      # Postgres for the integration suite. Without this, ~19 tests
+      # (auth refresh/rotation, the high-value SQL paths) skip in CI
+      # because `integration_engine` fails to connect.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
     steps:
       - uses: actions/checkout@v4
 
@@ -34,15 +53,16 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Skeleton check (P0.4)
-        # Real steps (lint/typecheck/test) wire up in P1.1 once pyproject.toml exists.
+      - name: Lint, typecheck, migrate, test
+        # Real steps wired up in P1.1; postgres service + migrations
+        # added in P1.10 so integration tests actually run in CI.
         run: |
-          echo "backend-ci skeleton — real pipeline lands in P1.1"
           if [ -f pyproject.toml ]; then
             uv sync --frozen
             uv run ruff check .
             uv run ruff format --check .
             uv run mypy app
+            uv run alembic upgrade head
             uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
           else
             echo "no pyproject.toml yet — skipping lint/typecheck/test"
