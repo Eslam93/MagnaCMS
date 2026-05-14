@@ -4,6 +4,65 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-14 — Auth, then two passes of review-driven hardening
+
+Three more PRs landed in close succession: auth foundation, then two rounds of fixes against an external code review. ([#109](https://github.com/Eslam93/MagnaCMS/pull/109), [#110](https://github.com/Eslam93/MagnaCMS/pull/110), [#111](https://github.com/Eslam93/MagnaCMS/pull/111).) The interesting story isn't the auth code itself — register/login/me with bcrypt + JWT is well-trodden ground. The interesting story is what the review caught.
+
+### Auth landed clean, with one footgun we didn't notice
+
+PR [#109](https://github.com/Eslam93/MagnaCMS/pull/109) shipped `POST /auth/register`, `POST /auth/login`, `GET /auth/me`. bcrypt cost 12, JWT HS256, refresh-token cookie (httpOnly, SameSite=Lax, Secure-when-prod). Same `INVALID_CREDENTIALS` error for unknown email vs. wrong password — anti-enumeration by design.
+
+Or so the comment claimed. The actual code:
+
+```python
+if user is None or not verify_password(password, user.password_hash):
+    raise UnauthorizedError(...)
+```
+
+Python's `or` short-circuits. If `user is None`, `verify_password` doesn't run, no bcrypt cost paid. So `unknown_email` returns in ~5ms and `wrong_password` in ~250ms. A registered email was distinguishable by latency alone, even though both paths returned the same error body. The same-error-message comment was true and the same-cost claim was false — a common shape of bug.
+
+### First review round (PR [#110](https://github.com/Eslam93/MagnaCMS/pull/110))
+
+Eight items accepted, six pushed back on. The fixes that mattered:
+
+- **Timing leak** — precomputed dummy bcrypt hash, always call `verify_password`. Now both paths pay the same ~250ms.
+- **JWT secret validation** — the previous check matched a handful of placeholder prefixes; `"secret"` passed. Added a denylist + length floor + low-variety guard.
+- **bcrypt 72-byte truncation** — `validate_password_strength` now rejects passwords whose UTF-8 encoding exceeds 72 bytes. Pydantic `max_length` is char-level; 70 emoji chars = ~280 bytes silently truncated before this fix.
+- **X-Forwarded-For unvalidated** — junk in the header was reaching the Postgres `INET` column and crashing the request as a 500. Now parsed via `ipaddress` first, falls through on garbage.
+- **Middleware order documented backwards** — Starlette stacks the last-added middleware as the outermost. My comments said the opposite. Reordered so CORS is genuinely outermost (preflights short-circuit), and rewrote `RequestIDMiddleware` as **pure-ASGI** (no `BaseHTTPMiddleware` child-task spawning, which had been breaking contextvar visibility for downstream readers).
+
+Pushed back on: the broader Bedrock-instead-of-OpenAI argument (scope), anonymize-instead-of-hard-delete users (deliberately not in scope), partial-where index optimizations (premature at MVP volume), register-endpoint email enumeration (UX trade-off; mitigation is rate-limit in a later phase, not silent success).
+
+### Second review round (PR [#111](https://github.com/Eslam93/MagnaCMS/pull/111))
+
+Reviewer caught that the first-round JWT secret validator still accepted any 32+ char string with >2-char variety. `"the-quick-brown-fox-jumps-over-the-lazy-dog"` would pass — and would even decode through base64url to ~33 bytes, slipping through any naive length-of-decoded-bytes check.
+
+Tightened to a strict format gate:
+
+- **hex** with ≥64 chars (decodes to ≥32 bytes), OR
+- **base64 / base64url** that decodes to ≥32 bytes AND has Shannon entropy ≥ 5 bits/byte on the decoded payload.
+
+Shannon entropy is the catch. Random bytes hit ~7.5 bits/byte; English text base64-decoded hits ~4. The fox phrase fails the entropy gate even though it passes format + length. The implementation caught itself during testing — the test I wrote expected the phrase to be rejected as "not a strong format", and the actual rejection was as "low Shannon entropy". The deeper guard fired correctly.
+
+Other second-round fixes:
+
+- **bcrypt 72-byte cap moved to login too** — registration already rejected long passwords, but login passed them straight to bcrypt, which silently truncates. A user with an exactly-72-byte password could authenticate with that password + any trailing bytes. Live-verified the fix: register at 72 bytes succeeds, login with `password + "trailing-garbage"` now returns 401, login with the real password still works.
+- **Cookie `Secure` consistent with env protection** — was set only for staging/prod; now set whenever `env != local`. A shared cloud `dev` env was previously getting non-Secure cookies despite being treated as protected for secrets.
+- **Service-level timing regression test** — the first round's smoke test exercised `verify_password` directly. A revert of the `auth_service` short-circuit would still have passed it. Added a unit test that mocks the repository to return `None`, then asserts `verify_password` was called with the real bcrypt dummy hash. Future "cleanup" that reintroduces `if user is None: raise` fails this test.
+- **`_client_ip` docstring** — added a `WARNING` block stating this value is for audit storage only. Client-supplied XFF is honored when it's a valid IP (fine for audit), unsafe as a rate-limit identity. Future rate-limit work has to use `request.client.host` plus a trusted-proxy allowlist.
+
+### What review feedback looks like when you take it seriously
+
+The reviewer wasn't picking nits. They were saying: *you wrote a comment that claims X, and the code does Y; either the comment is wrong or the code is.* In two of the three rounds, the code was wrong. The "anti-enumeration" comment was the most painful — it was true in spirit (same error body), false in operational reality (different latency). Reviewer's instinct: don't trust same-model self-review for security-sensitive claims.
+
+Pushing back on the wrong things would have wasted the review. Pushing back on the right things — Bedrock-vs-OpenAI for scope, anonymize-users for scope creep, partial-index optimization without query patterns to optimize against — kept the work focused. The skill is knowing which is which.
+
+### Where we are
+
+73 tests pass, coverage 90.53%, lint/format/mypy strict all clean. Auth is end-to-end: register, login, `/me`, with timing parity, strict JWT secret format, bcrypt 72-byte caps on both sides, Secure cookies in non-local envs, and audit-safe IP capture. Refresh-token rotation + `/logout` is the next chunk — atomic conditional `UPDATE` for single-use semantics, plus reuse detection (a revoked token presented again means session compromise; revoke all of the user's tokens).
+
+---
+
 ## 2026-05-14 — Backend foundation: skeleton, DB, schema, migration
 
 Four PRs landed in one stretch — the boring-but-load-bearing layer the rest of the app sits on. ([#104](https://github.com/Eslam93/MagnaCMS/pull/104), [#105](https://github.com/Eslam93/MagnaCMS/pull/105), [#106](https://github.com/Eslam93/MagnaCMS/pull/106), [#107](https://github.com/Eslam93/MagnaCMS/pull/107).) The shape of each was determined more by infra correctness than by feature design — small things that ruin a week if you get them wrong on Day 5.
