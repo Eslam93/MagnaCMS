@@ -15,6 +15,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Importing `app.db` triggers model registration on Base.metadata,
+# which is what autogenerate compares the live DB against.
+import app.db  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base
 
