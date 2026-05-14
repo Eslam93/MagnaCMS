@@ -91,6 +91,10 @@ class RefreshTokenRepository:
 
         Returns the number of rows revoked (zero is a valid outcome — the
         user might have no active sessions left). Useful for telemetry.
+
+        Uses RETURNING to count rows instead of `result.rowcount` — the
+        latter isn't on the generic `Result[Any]` mypy sees from
+        `session.execute`, and the row count here is small by definition.
         """
         now = datetime.now(UTC)
         stmt = (
@@ -100,9 +104,10 @@ class RefreshTokenRepository:
                 RefreshToken.revoked_at.is_(None),
             )
             .values(revoked_at=now)
+            .returning(RefreshToken.id)
         )
         result = await self._session.execute(stmt)
-        return result.rowcount or 0
+        return len(result.all())
 
     async def revoke_by_hash(self, token_hash: str) -> bool:
         """Revoke the matching active token, if any. Idempotent.
@@ -123,6 +128,7 @@ class RefreshTokenRepository:
                 RefreshToken.revoked_at.is_(None),
             )
             .values(revoked_at=now)
+            .returning(RefreshToken.id)
         )
         result = await self._session.execute(stmt)
-        return (result.rowcount or 0) > 0
+        return result.scalar_one_or_none() is not None
