@@ -19,6 +19,7 @@ import * as cdk from "aws-cdk-lib";
 import { ComputeStack } from "../lib/compute-stack";
 import { loadConfig } from "../lib/config";
 import { DataStack } from "../lib/data-stack";
+import { EdgeStack } from "../lib/edge-stack";
 import { NetworkStack } from "../lib/network-stack";
 
 const app = new cdk.App();
@@ -58,9 +59,14 @@ const compute = new ComputeStack(app, `magnacms-${envName}-compute`, {
   rdsInstance: data.rdsInstance,
 });
 
+const edge = new EdgeStack(app, `magnacms-${envName}-edge`, {
+  env: awsEnv,
+  cfg,
+});
+
 // Downstream stacks (lands in subsequent PRs):
-//   const edge = new EdgeStack(app, `magnacms-${envName}-edge`, { env: awsEnv, cfg, data });
 //   new ObservabilityStack(app, `magnacms-${envName}-observability`, { env: awsEnv, cfg, compute });
 void compute;
+void edge;
 
 app.synth();
