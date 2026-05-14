@@ -1,5 +1,12 @@
-"""Database package — declarative `Base`, common mixins, async session plumbing."""
+"""Database package — declarative `Base`, common mixins, async session plumbing.
 
+Importing this package also imports every model so they are registered with
+`Base.metadata`. This is what Alembic's autogenerate inspects.
+"""
+
+# Import the models package for its side effect (model registration).
+# The `noqa: F401` keeps lint happy about the "unused" import.
+from app.db import models  # noqa: F401
 from app.db.base import Base, SoftDeleteMixin, TimestampedMixin
 from app.db.session import (
     DbSession,
