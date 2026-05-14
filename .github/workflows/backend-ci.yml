@@ -1,0 +1,49 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: latest
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Skeleton check (P0.4)
+        # Real steps (lint/typecheck/test) wire up in P1.1 once pyproject.toml exists.
+        run: |
+          echo "backend-ci skeleton — real pipeline lands in P1.1"
+          if [ -f pyproject.toml ]; then
+            uv sync --frozen
+            uv run ruff check .
+            uv run ruff format --check .
+            uv run mypy app
+            uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+          else
+            echo "no pyproject.toml yet — skipping lint/typecheck/test"
+          fi
