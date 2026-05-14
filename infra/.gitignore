@@ -1,0 +1,16 @@
+# CDK build artifacts
+*.js
+!jest.config.js
+*.d.ts
+node_modules/
+
+# CDK output
+cdk.out/
+cdk.context.json
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

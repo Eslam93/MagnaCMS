@@ -1,21 +1,96 @@
-# Infra — AWS CDK (TypeScript)
+# MagnaCMS Infrastructure (AWS CDK, TypeScript)
 
-Infrastructure-as-code for the entire stack. Five CDK stacks:
+This directory holds the AWS CDK app that defines every cloud resource MagnaCMS uses: the VPC, RDS Postgres, ElastiCache Redis, App Runner backend service, ECR repository, Amplify-hosted frontend, CloudFront distribution for images, and CloudWatch log groups.
 
-| Stack | Owns |
-|---|---|
-| `NetworkStack` | VPC, subnets, security groups |
-| `DataStack` | RDS Postgres, ElastiCache Serverless Redis, S3 image bucket, Secrets Manager entries |
-| `ComputeStack` | ECR repo, App Runner service, IAM role (S3 + Secrets Manager + CloudWatch) |
-| `EdgeStack` | Amplify Hosting app, CloudFront for images, ACM cert + Route53 (optional) |
-| `ObservabilityStack` | CloudWatch log groups + retention |
+## Status
 
-See the top-level [`README.md`](../README.md) for the stack overview and [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the load-bearing decisions (including why App Runner runs without a VPC connector).
+| Stack | PR | Status |
+|---|---|---|
+| `magnacms-dev-network` | P2.2 | 📋 not yet |
+| `magnacms-dev-data` | P2.3 | 📋 not yet |
+| `magnacms-dev-compute` | P2.4 | 📋 not yet |
+| `magnacms-dev-edge` | P2.5 | 📋 not yet |
+| `magnacms-dev-observability` | P2.6 | 📋 not yet |
 
-## Single-command deploy / teardown
+The current PR (**P2.1**) lands the bootstrap: TypeScript project, jest, ts-node, `aws-cdk-lib`, the env-config loader, and the `infra-ci.yml` workflow that gates every PR with `cdk synth --all`.
+
+## Layout
+
+```
+infra/
+├── bin/
+│   └── magnacms.ts              # CDK app entry; reads --context env=dev
+├── lib/
+│   ├── config.ts                # per-env config loader
+│   ├── network-stack.ts         # → P2.2
+│   ├── data-stack.ts            # → P2.3
+│   ├── compute-stack.ts         # → P2.4
+│   ├── edge-stack.ts            # → P2.5
+│   └── observability-stack.ts   # → P2.6
+├── test/
+│   ├── config.test.ts           # current
+│   ├── network-stack.test.ts    # → P2.2
+│   └── ...
+├── cdk.json
+├── package.json
+├── tsconfig.json
+├── jest.config.js
+└── README.md
+```
+
+## Local commands
 
 ```bash
-cd infra && npm install
-npx cdk deploy --all     # provision everything
-npx cdk destroy --all    # tear it all down
+# Install deps
+npm ci
+
+# Build TS → JS (CDK's ts-node also handles this on-the-fly)
+npm run build
+
+# Run unit + snapshot tests
+npm test
+
+# Synthesize CloudFormation templates (no AWS account needed)
+npm run synth          # cdk synth --all -c env=dev
+npm run synth:diff     # cdk diff --all -c env=dev (requires deployed stacks)
 ```
+
+## Deploy
+
+See `DEPLOY.md` (added in P2.7) for the manual runbook. Short version:
+
+```bash
+aws configure                                # admin creds for target account
+npx cdk bootstrap aws://ACCOUNT/us-east-1    # one-time per account/region
+npx cdk deploy --all -c env=dev
+```
+
+## Environments
+
+Only `dev` is wired up in Phase 2. The `EnvConfig` shape in `lib/config.ts` already accommodates `staging` and `prod`; adding those is a single-PR follow-up (copy the dev entry, tighten instance sizes + retention + dev IP allowlist).
+
+Switch environments at deploy time:
+
+```bash
+npx cdk deploy --all -c env=dev
+# Later, once prod is wired:
+npx cdk deploy --all -c env=prod
+```
+
+Stack names are namespaced by env: `magnacms-dev-network`, `magnacms-prod-network`, etc. — multiple envs can coexist in one AWS account.
+
+## CI
+
+`.github/workflows/infra-ci.yml` runs on every PR that touches `infra/**`:
+
+1. `npm ci`
+2. `npm test` (jest snapshot + unit tests)
+3. `npx cdk synth --all -c env=dev`
+
+No AWS credentials are needed — `cdk synth` is purely local code generation. The real `cdk deploy` requires the user's AWS credentials and happens manually via `DEPLOY.md`.
+
+## References
+
+- Architecture rationale: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+- Phase 2 task spec: `../.private/PHASES.md` §P2.1–P2.10 (gitignored)
+- Brief §11 (Infrastructure): `../.private/PROJECT_BRIEF.md` (gitignored)
