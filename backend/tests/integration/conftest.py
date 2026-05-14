@@ -90,7 +90,7 @@ async def integration_client(
     app.dependency_overrides[get_db_session] = _override
     try:
         async with AsyncClient(
-            transport=ASGITransport(app=app),
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
             base_url="http://test",
         ) as ac:
             yield ac

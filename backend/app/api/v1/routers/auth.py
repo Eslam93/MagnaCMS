@@ -6,6 +6,8 @@ cookie shape so P1.6 can read it without further fuss.
 
 from __future__ import annotations
 
+import ipaddress
+
 from fastapi import APIRouter, Request, Response, status
 
 from app.api.v1.deps import CurrentUser
@@ -42,13 +44,34 @@ def _client_user_agent(request: Request) -> str | None:
     return ua[:500] if ua else None
 
 
+def _valid_ip(candidate: str | None) -> str | None:
+    """Return `candidate` only if it parses as a real IP, else None."""
+    if not candidate:
+        return None
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    return candidate
+
+
 def _client_ip(request: Request) -> str | None:
-    # Behind App Runner / Amplify there's usually a forwarded-for chain. For now
-    # take the first hop; production proxy config arrives with the deploy.
+    """Pick the originating client IP.
+
+    `X-Forwarded-For` is client-controllable until we sit behind a known proxy
+    config in production, so anything we extract from it gets validated as a
+    real IP before we let it into the `INET` column — otherwise junk like
+    `X-Forwarded-For: drop-table-users` becomes a 500.
+    """
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",", 1)[0].strip()
-    return request.client.host if request.client else None
+        first_hop = fwd.split(",", 1)[0].strip()
+        validated = _valid_ip(first_hop)
+        if validated is not None:
+            return validated
+        # Fall through to request.client when the header is junk.
+
+    return _valid_ip(request.client.host) if request.client else None
 
 
 @router.post(

@@ -30,6 +30,10 @@ JWT_ALGORITHM: Final[str] = "HS256"
 # design — strong passwords are the user's responsibility; we just forbid
 # the trivially weak ones.
 _PASSWORD_MIN_LENGTH = 8
+# bcrypt silently truncates inputs after 72 bytes — we reject longer
+# passwords explicitly so two passwords that differ only after byte 72 are
+# not treated as equal. UTF-8 bytes, not chars.
+_PASSWORD_MAX_BYTES = 72
 _PASSWORD_LETTER_RE = re.compile(r"[A-Za-z]")
 _PASSWORD_DIGIT_RE = re.compile(r"\d")
 
@@ -42,6 +46,11 @@ def validate_password_strength(password: str) -> None:
     """Raise PasswordTooWeakError if the password is unacceptable."""
     if len(password) < _PASSWORD_MIN_LENGTH:
         raise PasswordTooWeakError(f"Password must be at least {_PASSWORD_MIN_LENGTH} characters.")
+    if len(password.encode("utf-8")) > _PASSWORD_MAX_BYTES:
+        raise PasswordTooWeakError(
+            f"Password must be at most {_PASSWORD_MAX_BYTES} bytes when UTF-8 encoded "
+            "(bcrypt silently truncates inputs longer than this)."
+        )
     if not _PASSWORD_LETTER_RE.search(password):
         raise PasswordTooWeakError("Password must contain at least one letter.")
     if not _PASSWORD_DIGIT_RE.search(password):
@@ -62,6 +71,26 @@ def verify_password(password: str, hashed: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except (ValueError, TypeError):
         return False
+
+
+# Cached dummy hash used to equalize the bcrypt cost between the
+# "user not found" and "wrong password" branches of login. Computed on
+# first use; ~250ms at cost-12 is paid once per process.
+_DUMMY_HASH: str | None = None
+
+
+def get_dummy_password_hash() -> str:
+    """Return a stable bcrypt hash of a non-secret string.
+
+    Login calls `verify_password(submitted, this_hash)` when the email
+    lookup misses, so the unknown-email path pays the same CPU cost as
+    the wrong-password path. Without this, an attacker can distinguish
+    registered emails by response latency alone.
+    """
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = hash_password("timing-equalizer-not-a-real-password")
+    return _DUMMY_HASH
 
 
 def _jwt_secret() -> str:

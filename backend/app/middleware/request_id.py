@@ -1,38 +1,62 @@
-"""X-Request-ID middleware. Generates a UUID when the request lacks one.
+"""X-Request-ID middleware. Pure-ASGI implementation.
 
-The id is stored on `request.state.request_id`, exposed via the
-`X-Request-ID` response header, and pushed into the contextvar used by
-structlog so every log line for the request carries it.
+`BaseHTTPMiddleware` runs `call_next` in a child task spawned by anyio.
+That has two practical consequences for request-id propagation:
+
+  1. ContextVars set in the dispatch task aren't always visible to FastAPI's
+     exception handlers, which run inside the routing layer. The
+     unhandled-exception envelope can lose `request_id` as a result.
+  2. The `try/finally` that clears the contextvar runs in the parent task,
+     so anything reading the contextvar after `call_next` returns sees the
+     cleared value.
+
+Pure-ASGI middleware sidesteps both: no child task is spawned, the
+contextvar is set once for the duration of the request, and we wrap `send`
+to inject the response header.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core.request_context import set_request_id
+from app.core.request_context import _request_id_var as _ctx_var
 
 REQUEST_ID_HEADER = "X-Request-ID"
+_REQUEST_ID_HEADER_BYTES = REQUEST_ID_HEADER.lower().encode("latin-1")
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Attach a request id to the request and response."""
+def _extract_incoming(scope: Scope) -> str | None:
+    for name, value in scope.get("headers", []):
+        if name == _REQUEST_ID_HEADER_BYTES:
+            decoded = value.decode("latin-1", errors="replace").strip()
+            return decoded or None
+    return None
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        request_id = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
-        request.state.request_id = request_id
-        set_request_id(request_id)
+
+class RequestIDMiddleware:
+    """Bind X-Request-ID into the contextvar + expose it on the response."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = _extract_incoming(scope) or str(uuid.uuid4())
+        token = _ctx_var.set(request_id)
+
+        async def wrapped_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers: list[tuple[bytes, bytes]] = list(message.get("headers", []))
+                headers.append((_REQUEST_ID_HEADER_BYTES, request_id.encode("latin-1")))
+                message["headers"] = headers
+            await send(message)
+
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, wrapped_send)
         finally:
-            set_request_id(None)
-        response.headers[REQUEST_ID_HEADER] = request_id
-        return response
+            _ctx_var.reset(token)

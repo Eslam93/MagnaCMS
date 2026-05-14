@@ -1,12 +1,19 @@
 """FastAPI application factory + ASGI entry point.
 
-Wiring order is deliberate:
-  1. CORS first  — preflights short-circuit before any other middleware runs.
-  2. Access log  — logs every completed request with timing + status.
-  3. Request ID  — runs *innermost* so the id is bound before any handler
-                   work, and unwinds after access logging captures it.
-  4. Exception handlers — consistent envelope on every failure path.
-  5. v1 router   — mounted at /api/v1.
+Starlette stacks middleware in REVERSE order of `add_middleware()` calls:
+the last one added is the outermost. So a request flows from the outermost
+(last added) wrapper inward, then back outward on the response. The wiring
+below reads outer-to-inner along the request path:
+
+  1. CORS (last added, outermost) — preflights short-circuit before any
+     other middleware allocates work.
+  2. RequestID                    — binds `X-Request-ID` into the contextvar.
+  3. AccessLog (first added, innermost) — reads the bound request_id from
+     the contextvar so every log line carries it.
+  4. Exception handlers           — consistent {error, meta} envelope on
+                                    every failure path; runs inside the
+                                    middleware stack.
+  5. v1 router                    — mounted at /api/v1.
 """
 
 from __future__ import annotations
@@ -55,9 +62,12 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
-    # CORS first so preflights short-circuit.
+    # Add middleware INNER-MOST first so the LAST-added one wraps outside
+    # everything else (Starlette's documented ordering).
+    app.add_middleware(AccessLogMiddleware)  # innermost — runs last on the way out
+    app.add_middleware(RequestIDMiddleware)  # binds contextvar before AccessLog reads it
     app.add_middleware(
-        CORSMiddleware,
+        CORSMiddleware,  # outermost — preflights short-circuit before anything else
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -70,11 +80,6 @@ def create_app() -> FastAPI:
         expose_headers=[REQUEST_ID_HEADER],
         max_age=600,
     )
-
-    # Starlette stacks middleware in reverse-add order, so AccessLog wraps
-    # RequestID — the request_id is bound BEFORE access-log captures the call.
-    app.add_middleware(AccessLogMiddleware)
-    app.add_middleware(RequestIDMiddleware)
 
     register_exception_handlers(app)
 

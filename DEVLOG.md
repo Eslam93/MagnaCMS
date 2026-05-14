@@ -76,15 +76,17 @@ When the conversation suggested `gpt-5.4-mini` for text, we initially didn't rec
 
 Lesson: when an external API surface is involved, _list, don't recall._
 
-### Provider abstractions, but not too many
+### Provider abstractions — the plan (not yet in code)
 
-`ILLMProvider` and `IImageProvider` have three implementations each:
+When the AI provider layer lands (next phase), `ILLMProvider` and `IImageProvider` will each have three implementations:
 
-1. **OpenAI** — primary, full implementation.
+1. **OpenAI** — primary, real implementation.
 2. **Mock** — fully built; returns canned valid JSON per content type (text) and a deterministic placeholder PNG (image). The point is to be able to run the full app end-to-end with zero API keys — useful for CI, useful for anyone who wants to see how the UI flows without spending a cent.
 3. **Bedrock** — stubbed (`NotImplementedError`). Selectable via `AI_PROVIDER_MODE=bedrock` but the actual implementation only lands when there's a real reason to switch.
 
-We rejected the `AnthropicDirectProvider` we'd originally considered. Keeping a half-built stub felt like the worst of both worlds — it would advertise a fallback mode that doesn't actually work. If we want it later, we'll build it then.
+We rejected the `AnthropicDirectProvider` we'd originally considered. Keeping a half-built stub would advertise a fallback mode that doesn't actually work — worst of both worlds. If we want it later, we'll build it then.
+
+_(As of this entry, `app/providers/` doesn't exist yet. The design above is what the next provider PR will implement; this paragraph is the spec, not a status report.)_
 
 ### Phase 0: the boring but load-bearing layer
 
