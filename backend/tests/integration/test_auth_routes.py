@@ -193,9 +193,7 @@ async def _register_and_get_refresh(
 async def test_refresh_with_valid_cookie_returns_new_pair(
     integration_client: AsyncClient,
 ) -> None:
-    original = await _register_and_get_refresh(
-        integration_client, email="eve@example.com"
-    )
+    original = await _register_and_get_refresh(integration_client, email="eve@example.com")
 
     response = await integration_client.post(
         "/api/v1/auth/refresh",
@@ -234,9 +232,7 @@ async def test_refresh_old_token_after_rotation_returns_401(
 ) -> None:
     """Single-use rotation: presenting the now-revoked original after a
     successful refresh must fail. This is the core invariant of P1.6."""
-    original = await _register_and_get_refresh(
-        integration_client, email="frank@example.com"
-    )
+    original = await _register_and_get_refresh(integration_client, email="frank@example.com")
 
     first = await integration_client.post(
         "/api/v1/auth/refresh",
@@ -259,9 +255,7 @@ async def test_refresh_reuse_revokes_entire_family(
     """Reuse detection: after a token has been spent, presenting it again
     revokes ALL active refresh tokens for that user. The new token issued
     by the legitimate rotation also stops working."""
-    original = await _register_and_get_refresh(
-        integration_client, email="grace@example.com"
-    )
+    original = await _register_and_get_refresh(integration_client, email="grace@example.com")
 
     first = await integration_client.post(
         "/api/v1/auth/refresh",
@@ -288,10 +282,10 @@ async def test_refresh_reuse_revokes_entire_family(
 
     # Every refresh_token row for this user should be revoked.
     rows = (
-        await db_session.execute(
-            select(RefreshToken).where(RefreshToken.revoked_at.is_(None))
-        )
-    ).scalars().all()
+        (await db_session.execute(select(RefreshToken).where(RefreshToken.revoked_at.is_(None))))
+        .scalars()
+        .all()
+    )
     assert rows == []
 
 
@@ -300,15 +294,11 @@ async def test_refresh_with_expired_token_returns_401(
     db_session: AsyncSession,
 ) -> None:
     """An expired refresh token must not refresh, even before it's revoked."""
-    raw = await _register_and_get_refresh(
-        integration_client, email="harry@example.com"
-    )
+    raw = await _register_and_get_refresh(integration_client, email="harry@example.com")
     # Force the stored row to be expired (1s ago).
     token_hash = hash_refresh_token(raw)
     row = (
-        await db_session.execute(
-            select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-        )
+        await db_session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     ).scalar_one()
     row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.flush()
@@ -328,9 +318,7 @@ async def test_logout_revokes_token_and_clears_cookie(
     integration_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    raw = await _register_and_get_refresh(
-        integration_client, email="ivan@example.com"
-    )
+    raw = await _register_and_get_refresh(integration_client, email="ivan@example.com")
 
     response = await integration_client.post(
         "/api/v1/auth/logout",
@@ -341,14 +329,12 @@ async def test_logout_revokes_token_and_clears_cookie(
     # Cookie deletion is signaled by an empty-value Max-Age=0 Set-Cookie.
     set_cookie = response.headers.get("set-cookie", "")
     assert "refresh_token=" in set_cookie
-    assert "Max-Age=0" in set_cookie or 'expires=Thu, 01 Jan 1970' in set_cookie.lower()
+    assert "Max-Age=0" in set_cookie or "expires=Thu, 01 Jan 1970" in set_cookie.lower()
 
     # The row in the DB is now revoked.
     token_hash = hash_refresh_token(raw)
     row = (
-        await db_session.execute(
-            select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-        )
+        await db_session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     ).scalar_one()
     assert row.revoked_at is not None
 
@@ -372,9 +358,7 @@ async def test_logout_without_cookie_returns_204(
 async def test_logout_is_idempotent(
     integration_client: AsyncClient,
 ) -> None:
-    raw = await _register_and_get_refresh(
-        integration_client, email="judy@example.com"
-    )
+    raw = await _register_and_get_refresh(integration_client, email="judy@example.com")
 
     first = await integration_client.post(
         "/api/v1/auth/logout",
@@ -397,9 +381,7 @@ async def test_logout_does_not_trigger_reuse_detection(
     user's other sessions — only `/auth/refresh` is the reuse-detection
     surface. A user can have multiple sessions (laptop + phone); logging
     out the laptop must not kick the phone."""
-    raw_a = await _register_and_get_refresh(
-        integration_client, email="kate@example.com"
-    )
+    raw_a = await _register_and_get_refresh(integration_client, email="kate@example.com")
     # Issue a second session via login.
     login = await integration_client.post(
         "/api/v1/auth/login",

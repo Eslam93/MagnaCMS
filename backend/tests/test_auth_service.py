@@ -91,9 +91,7 @@ async def test_refresh_reuse_triggers_family_revocation(monkeypatch: MonkeyPatch
     service, _users, refresh_repo = _make_service_with_mocks(monkeypatch)
     user_id = uuid.uuid4()
     refresh_repo.consume_if_active.return_value = None
-    refresh_repo.find_by_hash.return_value = _make_token_row(
-        user_id=user_id, revoked=True
-    )
+    refresh_repo.find_by_hash.return_value = _make_token_row(user_id=user_id, revoked=True)
     refresh_repo.revoke_all_for_user.return_value = 3
 
     with pytest.raises(UnauthorizedError) as exc_info:
@@ -199,5 +197,3 @@ async def test_refresh_with_orphaned_user_id_returns_unauthorized(
 
     assert exc_info.value.code == "INVALID_REFRESH_TOKEN"
     refresh_repo.revoke_all_for_user.assert_not_awaited()
-
-
