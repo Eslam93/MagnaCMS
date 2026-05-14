@@ -216,3 +216,102 @@ async def test_refresh_with_orphaned_user_id_returns_unauthorized(
 
     assert exc_info.value.code == "INVALID_REFRESH_TOKEN"
     refresh_repo.revoke_all_for_user.assert_not_awaited()
+
+
+# ── register: weak password + duplicate email branches ────────────────
+
+
+async def test_register_with_weak_password_raises_validation_error(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """The weak-password branch must NOT reach the user repo — fail
+    fast, no DB write, no bcrypt cost."""
+    service, users, _refresh_repo = _make_service_with_mocks(monkeypatch)
+
+    with pytest.raises(Exception) as exc_info:
+        await service.register(
+            email="x@example.com",
+            password="weak",  # too short
+            full_name="X",
+        )
+    assert "WEAK_PASSWORD" in str(exc_info.value.code)  # type: ignore[attr-defined]
+    users.create.assert_not_awaited()
+
+
+async def test_register_with_duplicate_email_raises_conflict_error(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """When the repo raises IntegrityError, the service rolls back and
+    surfaces a CONFLICT envelope. This is the email-already-taken path."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.core.exceptions import ConflictError
+
+    service, users, _refresh_repo = _make_service_with_mocks(monkeypatch)
+    # Stub session.rollback so the test doesn't need a real session.
+    session_mock = MagicMock()
+    session_mock.rollback = AsyncMock()
+    service._session = session_mock  # type: ignore[attr-defined]
+
+    users.create.side_effect = IntegrityError("dup", {}, Exception("dup"))
+
+    with pytest.raises(ConflictError) as exc_info:
+        await service.register(
+            email="x@example.com",
+            password="Secret123",
+            full_name="X",
+        )
+    assert exc_info.value.code == "EMAIL_TAKEN"
+    session_mock.rollback.assert_awaited_once()
+
+
+# ── login: happy path mints tokens with audit metadata ────────────────
+
+
+async def test_login_happy_path_mints_tokens_and_touches_last_login(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Login success must (1) call touch_last_login, (2) create a
+    refresh token row, (3) return an access token tied to the user."""
+    service, users, refresh_repo = _make_service_with_mocks(monkeypatch)
+    user = _make_user()
+    users.find_by_email.return_value = user
+    # The real verify_password call must succeed against this user's
+    # actual hash — _make_user() bcrypt-hashes "Secret123" so we use
+    # that as the input to login.
+    monkeypatch.setattr(
+        "app.services.auth_service.verify_password",
+        lambda _pw, _hash: True,
+    )
+
+    found_user, tokens = await service.login(
+        email="alice@example.com",
+        password="Secret123",
+        user_agent="pytest",
+        ip_address="203.0.113.42",
+    )
+
+    assert found_user is user
+    assert tokens.access_token
+    assert tokens.refresh_token_raw
+    users.touch_last_login.assert_awaited_once_with(user)
+    refresh_repo.create.assert_awaited_once()
+    create_kwargs = refresh_repo.create.call_args.kwargs
+    assert create_kwargs["user_agent"] == "pytest"
+    assert create_kwargs["ip_address"] == "203.0.113.42"
+
+
+# ── get_user: missing user raises ─────────────────────────────────────
+
+
+async def test_get_user_missing_id_raises_unauthorized(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Token's `sub` resolved to a UUID, but the user was hard-deleted
+    in the meantime. We refuse the request rather than synthesize a
+    stale identity."""
+    service, users, _refresh_repo = _make_service_with_mocks(monkeypatch)
+    users.find_by_id.return_value = None
+
+    with pytest.raises(UnauthorizedError):
+        await service.get_user(uuid.uuid4())
