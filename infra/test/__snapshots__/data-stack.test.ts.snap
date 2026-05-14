@@ -1,0 +1,468 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`DataStack (dev) matches snapshot 1`] = `
+{
+  "Outputs": {
+    "ImagesBucketName": {
+      "Export": {
+        "Name": "test-data-images-bucket-name",
+      },
+      "Value": {
+        "Ref": "ImagesBucket1E86AFB2",
+      },
+    },
+    "JwtSecretArn": {
+      "Export": {
+        "Name": "test-data-jwt-secret-arn",
+      },
+      "Value": {
+        "Ref": "JwtSecretB8834B39",
+      },
+    },
+    "OpenaiApiKeySecretArn": {
+      "Export": {
+        "Name": "test-data-openai-api-key-secret-arn",
+      },
+      "Value": {
+        "Ref": "OpenaiApiKeySecret330F502F",
+      },
+    },
+    "RdsEndpoint": {
+      "Export": {
+        "Name": "test-data-rds-endpoint",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Postgres9DC8BB04",
+          "Endpoint.Address",
+        ],
+      },
+    },
+    "RdsPort": {
+      "Export": {
+        "Name": "test-data-rds-port",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Postgres9DC8BB04",
+          "Endpoint.Port",
+        ],
+      },
+    },
+    "RdsSecretArn": {
+      "Export": {
+        "Name": "test-data-rds-secret-arn",
+      },
+      "Value": {
+        "Ref": "PostgresSecretAttachment75CD6F6F",
+      },
+    },
+    "RedisEndpoint": {
+      "Export": {
+        "Name": "test-data-redis-endpoint",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Redis",
+          "Endpoint.Address",
+        ],
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F": {
+      "DependsOn": [
+        "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-us-east-1",
+          },
+          "S3Key": "faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip",
+        },
+        "Description": {
+          "Fn::Join": [
+            "",
+            [
+              "Lambda function for auto-deleting objects in ",
+              {
+                "Ref": "ImagesBucket1E86AFB2",
+              },
+              " S3 bucket.",
+            ],
+          ],
+        },
+        "Handler": "index.handler",
+        "MemorySize": 128,
+        "Role": {
+          "Fn::GetAtt": [
+            "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 900,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:\${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "ImagesBucket1E86AFB2": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256",
+              },
+            },
+          ],
+        },
+        "BucketName": "ai-content-images-dev",
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "transition-to-ia",
+              "Status": "Enabled",
+              "Transitions": [
+                {
+                  "StorageClass": "STANDARD_IA",
+                  "TransitionInDays": 90,
+                },
+              ],
+            },
+          ],
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true,
+        },
+        "Tags": [
+          {
+            "Key": "aws-cdk:auto-delete-objects",
+            "Value": "true",
+          },
+        ],
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ImagesBucketAutoDeleteObjectsCustomResource1A749259": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "ImagesBucketPolicy5ED12B6C",
+      ],
+      "Properties": {
+        "BucketName": {
+          "Ref": "ImagesBucket1E86AFB2",
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+            "Arn",
+          ],
+        },
+      },
+      "Type": "Custom::S3AutoDeleteObjects",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ImagesBucketPolicy5ED12B6C": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "ImagesBucket1E86AFB2",
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false",
+                },
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*",
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ImagesBucket1E86AFB2",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "ImagesBucket1E86AFB2",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "s3:PutBucketPolicy",
+                "s3:GetBucket*",
+                "s3:List*",
+                "s3:DeleteObject*",
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+                    "Arn",
+                  ],
+                },
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ImagesBucket1E86AFB2",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "ImagesBucket1E86AFB2",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::S3::BucketPolicy",
+    },
+    "JwtSecretB8834B39": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "Description": "JWT signing secret. 32 random bytes, hex-encoded.",
+        "GenerateSecretString": {
+          "ExcludeCharacters": ""@/\\' ",
+          "ExcludePunctuation": true,
+          "PasswordLength": 64,
+        },
+        "Name": "magnacms-dev-jwt-secret",
+      },
+      "Type": "AWS::SecretsManager::Secret",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "OpenaiApiKeySecret330F502F": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "Description": "OpenAI API key (sk-proj-...). Populated manually via console after first deploy — DataStack creates the secret empty so ComputeStack can reference its ARN.",
+        "GenerateSecretString": {},
+        "Name": "magnacms-dev-openai-api-key",
+      },
+      "Type": "AWS::SecretsManager::Secret",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "Postgres9DC8BB04": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "AllocatedStorage": "20",
+        "BackupRetentionPeriod": 0,
+        "CopyTagsToSnapshot": true,
+        "DBInstanceClass": "db.t4g.micro",
+        "DBName": "magnacms",
+        "DBSubnetGroupName": {
+          "Ref": "PostgresSubnetGroup9F8A4D6E",
+        },
+        "DeleteAutomatedBackups": true,
+        "DeletionProtection": false,
+        "Engine": "postgres",
+        "EngineVersion": "16.3",
+        "MasterUserPassword": {
+          "Fn::Join": [
+            "",
+            [
+              "{{resolve:secretsmanager:",
+              {
+                "Ref": "testdataPostgresSecret7D0C1FF33fdaad7efa858a3daf9490cf0a702aeb",
+              },
+              ":SecretString:password::}}",
+            ],
+          ],
+        },
+        "MasterUsername": "magnacms_app",
+        "PubliclyAccessible": true,
+        "StorageEncrypted": true,
+        "StorageType": "gp2",
+        "VPCSecurityGroups": [
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputFnGetAttSgRds7233AF52GroupId6B15E44C",
+          },
+        ],
+      },
+      "Type": "AWS::RDS::DBInstance",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "PostgresSecretAttachment75CD6F6F": {
+      "Properties": {
+        "SecretId": {
+          "Ref": "testdataPostgresSecret7D0C1FF33fdaad7efa858a3daf9490cf0a702aeb",
+        },
+        "TargetId": {
+          "Ref": "Postgres9DC8BB04",
+        },
+        "TargetType": "AWS::RDS::DBInstance",
+      },
+      "Type": "AWS::SecretsManager::SecretTargetAttachment",
+    },
+    "PostgresSubnetGroup9F8A4D6E": {
+      "Properties": {
+        "DBSubnetGroupDescription": "Subnet group for Postgres database",
+        "SubnetIds": [
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet1Subnet2BB74ED74EB42ADC",
+          },
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet2SubnetE34B022AC8BB6627",
+          },
+        ],
+      },
+      "Type": "AWS::RDS::DBSubnetGroup",
+    },
+    "Redis": {
+      "DependsOn": [
+        "RedisSubnetGroup",
+      ],
+      "Properties": {
+        "Engine": "redis",
+        "SecurityGroupIds": [
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputFnGetAttSgRedis85D0B09AGroupId0721C382",
+          },
+        ],
+        "ServerlessCacheName": "magnacms-dev-redis",
+        "SubnetIds": [
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet1Subnet2BB74ED74EB42ADC",
+          },
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet2SubnetE34B022AC8BB6627",
+          },
+        ],
+      },
+      "Type": "AWS::ElastiCache::ServerlessCache",
+    },
+    "RedisSubnetGroup": {
+      "Properties": {
+        "CacheSubnetGroupName": "magnacms-dev-redis-subnets",
+        "Description": "Redis subnet group for dev",
+        "SubnetIds": [
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet1Subnet2BB74ED74EB42ADC",
+          },
+          {
+            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet2SubnetE34B022AC8BB6627",
+          },
+        ],
+      },
+      "Type": "AWS::ElastiCache::SubnetGroup",
+    },
+    "testdataPostgresSecret7D0C1FF33fdaad7efa858a3daf9490cf0a702aeb": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "Description": {
+          "Fn::Join": [
+            "",
+            [
+              "Generated by the CDK for stack: ",
+              {
+                "Ref": "AWS::StackName",
+              },
+            ],
+          ],
+        },
+        "GenerateSecretString": {
+          "ExcludeCharacters": " %+~\`#$&*()|[]{}:;<>?!'/@"\\",
+          "GenerateStringKey": "password",
+          "PasswordLength": 30,
+          "SecretStringTemplate": "{"username":"magnacms_app"}",
+        },
+        "Name": "magnacms-dev-rds-credentials",
+      },
+      "Type": "AWS::SecretsManager::Secret",
+      "UpdateReplacePolicy": "Delete",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;

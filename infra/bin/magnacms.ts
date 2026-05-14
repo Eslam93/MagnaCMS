@@ -17,6 +17,7 @@ import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 
 import { loadConfig } from "../lib/config";
+import { DataStack } from "../lib/data-stack";
 import { NetworkStack } from "../lib/network-stack";
 
 const app = new cdk.App();
@@ -38,11 +39,18 @@ const network = new NetworkStack(app, `magnacms-${envName}-network`, {
   cfg,
 });
 
+const data = new DataStack(app, `magnacms-${envName}-data`, {
+  env: awsEnv,
+  cfg,
+  vpc: network.vpc,
+  sgRds: network.sgRds,
+  sgRedis: network.sgRedis,
+});
+
 // Downstream stacks (lands in subsequent PRs):
-//   const data = new DataStack(app, `magnacms-${envName}-data`, { env: awsEnv, cfg, network });
 //   const compute = new ComputeStack(app, `magnacms-${envName}-compute`, { env: awsEnv, cfg, network, data });
 //   const edge = new EdgeStack(app, `magnacms-${envName}-edge`, { env: awsEnv, cfg, data });
 //   new ObservabilityStack(app, `magnacms-${envName}-observability`, { env: awsEnv, cfg, compute });
-void network;
+void data;
 
 app.synth();
