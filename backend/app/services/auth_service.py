@@ -1,9 +1,10 @@
-"""Auth business logic: register, login, current user.
+"""Auth business logic: register, login, refresh, logout, current user.
 
-Refresh-token rotation + logout arrive in P1.6 (the conditional-update
-atomicity story is its own thing). For now we issue a fresh refresh
-token on login and persist its hash; the consumer of that token lands
-next.
+The refresh path uses single-use rotation: the incoming token is claimed
+atomically (`consume_if_active`) and a fresh pair is issued in the same
+transaction. If the atomic claim misses but a matching row exists in
+the revoked state, that's reuse — a previously-spent token presented
+again — and the entire session family for that user is revoked.
 """
 
 from __future__ import annotations
@@ -17,18 +18,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, UnauthorizedError, ValidationError
+from app.core.logging import get_logger
 from app.core.security import (
     PasswordTooWeakError,
     create_access_token,
     generate_refresh_token,
     get_dummy_password_hash,
     hash_password,
+    hash_refresh_token,
     validate_password_strength,
     verify_password,
 )
 from app.db.models import User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,81 @@ class AuthService:
         if user is None:
             raise UnauthorizedError("Authenticated user no longer exists.")
         return user
+
+    async def refresh(
+        self,
+        *,
+        raw_refresh: str,
+        user_agent: str | None = None,
+        ip_address: str | None = None,
+    ) -> tuple[User, AuthTokens]:
+        """Rotate a refresh token. Single-use; reuse triggers family revocation.
+
+        Concurrent legitimate refreshes with the same raw token are
+        indistinguishable from replay-by-attacker: only one transaction
+        wins the atomic claim, and the loser's view (revoked row) looks
+        identical to reuse. We treat both as compromise. The client-side
+        mitigation is request deduplication — a well-behaved SPA should
+        serialize its refresh requests behind a single in-flight promise.
+        """
+        token_hash = hash_refresh_token(raw_refresh)
+        claimed_user_id = await self._refresh_tokens.consume_if_active(token_hash)
+
+        if claimed_user_id is None:
+            await self._handle_refresh_miss(token_hash)
+            raise UnauthorizedError(
+                "Refresh token is invalid or expired.",
+                code="INVALID_REFRESH_TOKEN",
+            )
+
+        user = await self._users.find_by_id(claimed_user_id)
+        if user is None:
+            # The user was deleted between issuing the token and refresh.
+            # The token is already revoked (we just claimed it), so no
+            # further cleanup is needed.
+            raise UnauthorizedError(
+                "Refresh token is invalid or expired.",
+                code="INVALID_REFRESH_TOKEN",
+            )
+
+        tokens = await self._mint_tokens(
+            user,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+        return user, tokens
+
+    async def logout(self, *, raw_refresh: str | None) -> None:
+        """Revoke the given refresh token if it exists. Idempotent.
+
+        No-op when the cookie is missing or the token is unknown — the
+        cookie clears on the response side regardless. Intentionally
+        does NOT trigger reuse detection: a user calling logout with a
+        revoked token is confused, not compromised.
+        """
+        if not raw_refresh:
+            return
+        token_hash = hash_refresh_token(raw_refresh)
+        await self._refresh_tokens.revoke_by_hash(token_hash)
+
+    async def _handle_refresh_miss(self, token_hash: str) -> None:
+        """Decide what a `consume_if_active` miss means and react.
+
+        Three causes of a miss: (1) the hash never existed, (2) the row
+        exists but was already revoked — reuse signal, (3) the row
+        exists but is expired. Only case 2 is a compromise indicator;
+        on that path we mass-revoke the user's active tokens.
+        """
+        existing = await self._refresh_tokens.find_by_hash(token_hash)
+        if existing is None or existing.revoked_at is None:
+            return
+        revoked_count = await self._refresh_tokens.revoke_all_for_user(existing.user_id)
+        log.warning(
+            "refresh_token_reuse_detected",
+            user_id=str(existing.user_id),
+            revoked_token_id=str(existing.id),
+            family_revoked_count=revoked_count,
+        )
 
     async def _mint_tokens(
         self,
