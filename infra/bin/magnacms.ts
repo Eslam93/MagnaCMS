@@ -17,6 +17,7 @@ import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 
 import { loadConfig } from "../lib/config";
+import { NetworkStack } from "../lib/network-stack";
 
 const app = new cdk.App();
 const envName = app.node.tryGetContext("env") ?? "dev";
@@ -32,15 +33,16 @@ cdk.Tags.of(app).add("project", "magnacms");
 cdk.Tags.of(app).add("environment", cfg.envName);
 cdk.Tags.of(app).add("managed-by", "cdk");
 
-// Stack instantiation lands in subsequent PRs:
-//   const network = new NetworkStack(app, `magnacms-${envName}-network`, { env: awsEnv, cfg });
+const network = new NetworkStack(app, `magnacms-${envName}-network`, {
+  env: awsEnv,
+  cfg,
+});
+
+// Downstream stacks (lands in subsequent PRs):
 //   const data = new DataStack(app, `magnacms-${envName}-data`, { env: awsEnv, cfg, network });
 //   const compute = new ComputeStack(app, `magnacms-${envName}-compute`, { env: awsEnv, cfg, network, data });
 //   const edge = new EdgeStack(app, `magnacms-${envName}-edge`, { env: awsEnv, cfg, data });
 //   new ObservabilityStack(app, `magnacms-${envName}-observability`, { env: awsEnv, cfg, compute });
-//
-// For now: synthesize an empty app. Keeps CI green and the entry point
-// honest while individual stacks land in their own PRs.
-void awsEnv;
+void network;
 
 app.synth();
