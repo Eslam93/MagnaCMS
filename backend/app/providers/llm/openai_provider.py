@@ -23,7 +23,7 @@ from typing import Any, Final
 import openai
 from openai import AsyncOpenAI
 
-from app.core.config import get_settings
+from app.core.config import Environment, get_settings
 from app.core.logging import get_logger
 from app.providers.errors import ProviderConfigError, ProviderError, ProviderRetryExhausted
 from app.providers.llm.base import LLMResult
@@ -31,8 +31,11 @@ from app.providers.llm.base import LLMResult
 log = get_logger(__name__)
 
 # USD per 1M tokens, as published. Hand-maintained — review when
-# OpenAI announces pricing changes. Unknown models log a warning and
-# fall through to zero, not a crash.
+# OpenAI announces pricing changes. In `local`, unknown models log a
+# warning and fall through to zero (so a dev experimenting with a new
+# model id doesn't get blocked). In any other env, an unknown model
+# is a misconfiguration: silently losing cost accounting is worse than
+# refusing to serve.
 _PRICE_PER_MILLION_TOKENS: Final[dict[str, tuple[float, float]]] = {
     # (input, output) per 1M tokens
     "gpt-5.4-mini-2026-03-17": (0.15, 0.60),
@@ -43,7 +46,14 @@ _PRICE_PER_MILLION_TOKENS: Final[dict[str, tuple[float, float]]] = {
 def _compute_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     pricing = _PRICE_PER_MILLION_TOKENS.get(model)
     if pricing is None:
-        log.warning("openai_unknown_model_pricing", model=model)
+        if get_settings().environment != Environment.LOCAL:
+            raise ProviderConfigError(
+                f"No pricing entry for model={model!r}. Update "
+                "_PRICE_PER_MILLION_TOKENS before deploying with this model — "
+                "silently losing cost accounting in non-local environments "
+                "is worse than refusing to serve."
+            )
+        log.warning("openai_unknown_model_pricing_local_only", model=model)
         return 0.0
     input_price, output_price = pricing
     return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
@@ -119,13 +129,18 @@ class OpenAIChatProvider:
                 },
             }
 
-        return await self._call_with_retry(request_kwargs, content_type=content_type)
+        return await self._call_with_retry(
+            request_kwargs,
+            content_type=content_type,
+            json_schema_supplied=json_schema is not None,
+        )
 
     async def _call_with_retry(
         self,
         request_kwargs: dict[str, Any],
         *,
         content_type: str,
+        json_schema_supplied: bool,
     ) -> LLMResult:
         started = time.perf_counter()
         last_exc: BaseException | None = None
@@ -161,6 +176,7 @@ class OpenAIChatProvider:
                     response,
                     content_type=content_type,
                     started=started,
+                    json_schema_supplied=json_schema_supplied,
                 )
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -181,6 +197,7 @@ class OpenAIChatProvider:
         *,
         content_type: str,
         started: float,
+        json_schema_supplied: bool,
     ) -> LLMResult:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         choice = response.choices[0]
@@ -200,6 +217,26 @@ class OpenAIChatProvider:
             latency_ms=elapsed_ms,
             finish_reason=choice.finish_reason,
         )
+
+        # When the caller asked for strict JSON schema output, any
+        # finish_reason other than "stop" means the response can't
+        # actually satisfy the schema — `length` truncates the JSON
+        # mid-output, `content_filter` redacts content the schema
+        # required. Treat these as provider failures so the service-
+        # layer fallback (P3.4 three-stage parser) can react cleanly
+        # rather than handing downstream a malformed JSON string.
+        if json_schema_supplied and choice.finish_reason not in (None, "stop"):
+            log.warning(
+                "openai_finish_reason_incomplete",
+                finish_reason=choice.finish_reason,
+                content_type=content_type,
+            )
+            raise ProviderError(
+                f"OpenAI returned finish_reason={choice.finish_reason!r} on a "
+                f"strict-JSON-schema request for content_type={content_type!r}. "
+                "The response cannot satisfy the schema."
+            )
+
         return LLMResult(
             raw_text=raw_text,
             model=response.model,

@@ -7,13 +7,18 @@ below reads outer-to-inner along the request path:
 
   1. CORS (last added, outermost) — preflights short-circuit before any
      other middleware allocates work.
-  2. RateLimit                    — rejects 429 before the request reaches
+  2. SecurityHeaders              — adds nosniff / DENY / CSP / HSTS to
+                                    every response on its way out,
+                                    INCLUDING 429s emitted by RateLimit.
+  3. RequestID                    — binds `X-Request-ID` into the contextvar
+                                    before RateLimit reads it for the
+                                    429 envelope.
+  4. RateLimit                    — rejects 429 before the request reaches
                                     auth code; bound IP is the real TCP
                                     peer (forwarded-for is unsafe as
                                     rate-limit identity until P11.x).
-  3. SecurityHeaders              — adds nosniff / DENY / CSP / HSTS to
-                                    every response on its way out.
-  4. RequestID                    — binds `X-Request-ID` into the contextvar.
+                                    Position INSIDE SecurityHeaders +
+                                    RequestID so 429 responses carry both.
   5. AccessLog (first added, innermost) — reads the bound request_id from
      the contextvar so every log line carries it.
   6. Exception handlers           — consistent {error, meta} envelope on
@@ -85,9 +90,11 @@ def create_app() -> FastAPI:
     # Add middleware INNER-MOST first so the LAST-added one wraps outside
     # everything else (Starlette's documented ordering).
     app.add_middleware(AccessLogMiddleware)  # innermost — runs last on the way out
-    app.add_middleware(RequestIDMiddleware)  # binds contextvar before AccessLog reads it
-    app.add_middleware(SecurityHeadersMiddleware)  # adds security headers on responses
     app.add_middleware(RateLimitMiddleware, rules=_AUTH_RATE_LIMITS)
+    app.add_middleware(
+        RequestIDMiddleware
+    )  # binds contextvar so RateLimit's 429 envelope carries it
+    app.add_middleware(SecurityHeadersMiddleware)  # wraps RateLimit so 429 carries security headers
     app.add_middleware(
         CORSMiddleware,  # outermost — preflights short-circuit before anything else
         allow_origins=settings.cors_origins,

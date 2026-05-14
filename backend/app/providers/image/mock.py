@@ -26,22 +26,32 @@ _PLACEHOLDER_PNG: Final[bytes] = base64.b64decode(_PLACEHOLDER_PNG_B64)
 
 class MockImageProvider:
     """In-process image-generation substitute. Returns the same bytes
-    every call so tests and demos stay byte-stable."""
+    every call so tests and demos stay byte-stable.
+
+    Dimensions in the result reflect the ACTUAL bytes (1×1) rather than
+    the requested `size`. Reporting fake 1024×1024 would lie to
+    downstream code (S3 upload, dimension probing, CDN); a caller that
+    really needs a 1024×1024 placeholder should generate one rather
+    than have the provider pretend.
+    """
 
     model: Final[str] = "mock-image-v1"
+
+    # Dimensions of the embedded 1×1 PNG.
+    _ACTUAL_WIDTH: Final[int] = 1
+    _ACTUAL_HEIGHT: Final[int] = 1
 
     async def generate(
         self,
         *,
         prompt: str,
         quality: ImageQuality = ImageQuality.MEDIUM,
-        size: tuple[int, int] = (1024, 1024),
+        size: tuple[int, int] = (1024, 1024),  # kept for interface parity; ignored
     ) -> ImageResult:
-        width, height = size
         return ImageResult(
             image_bytes=_PLACEHOLDER_PNG,
-            width=width,
-            height=height,
+            width=self._ACTUAL_WIDTH,
+            height=self._ACTUAL_HEIGHT,
             model=self.model,
             quality=quality,
             cost_usd=0.0,

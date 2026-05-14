@@ -54,8 +54,21 @@ def test_cost_for_each_known_quality() -> None:
     assert _compute_cost_usd("gpt-image-1", ImageQuality.HIGH) == 0.167
 
 
-def test_cost_for_unknown_model_is_zero() -> None:
+def test_cost_for_unknown_model_is_zero_in_local() -> None:
+    # Default test env is `local`; unknown models log + return 0.0.
     assert _compute_cost_usd("future-image-model", ImageQuality.HIGH) == 0.0
+
+
+def test_cost_for_unknown_model_raises_in_non_local(monkeypatch: MonkeyPatch) -> None:
+    """Same reasoning as the LLM provider — unknown pricing in
+    production silently destroys cost accounting."""
+    from app.core.config import Environment, get_settings
+
+    monkeypatch.setattr(get_settings(), "environment", Environment.PROD)
+    from app.providers.errors import ProviderConfigError
+
+    with pytest.raises(ProviderConfigError, match="No pricing entry"):
+        _compute_cost_usd("future-image-model", ImageQuality.HIGH)
 
 
 # ── happy path ─────────────────────────────────────────────────────────
