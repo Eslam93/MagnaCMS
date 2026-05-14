@@ -22,10 +22,15 @@ REFRESH_COOKIE_NAME = "refresh_token"
 
 
 def _set_refresh_cookie(response: Response, tokens: AuthTokens) -> None:
-    """Set the httpOnly refresh cookie. Secure flag follows the environment."""
+    """Set the httpOnly refresh cookie.
+
+    `Secure` is set for every environment except `local` — matching the same
+    "only local is permissive" rule the config validator applies to JWT
+    secrets. A shared cloud `dev` environment should get TLS-only cookies
+    too, otherwise the cookie can be observed in transit.
+    """
     settings = get_settings()
-    secure = settings.environment in {Environment.PROD, Environment.STAGING}
-    max_age = int((tokens.refresh_expires_at.timestamp()) - 0)  # absolute expiry
+    secure = settings.environment != Environment.LOCAL
     response.set_cookie(
         REFRESH_COOKIE_NAME,
         tokens.refresh_token_raw,
@@ -35,8 +40,6 @@ def _set_refresh_cookie(response: Response, tokens: AuthTokens) -> None:
         max_age=settings.jwt_refresh_token_ttl_seconds,
         path="/api/v1/auth",
     )
-    # `max_age` is what we want clients to honor; `expires` would override.
-    _ = max_age  # kept for future audit if we switch to absolute expires
 
 
 def _client_user_agent(request: Request) -> str | None:
@@ -56,12 +59,20 @@ def _valid_ip(candidate: str | None) -> str | None:
 
 
 def _client_ip(request: Request) -> str | None:
-    """Pick the originating client IP.
+    """Pick the originating client IP for *audit storage only*.
 
     `X-Forwarded-For` is client-controllable until we sit behind a known proxy
-    config in production, so anything we extract from it gets validated as a
-    real IP before we let it into the `INET` column — otherwise junk like
+    config, so anything we extract from it gets validated as a real IP before
+    we let it into the `INET` column — otherwise junk like
     `X-Forwarded-For: drop-table-users` becomes a 500.
+
+    **WARNING (for P1.9 rate limiting and any future security decision):**
+    do NOT reuse this value as a security identity. A client can put any
+    syntactically valid IP in the header and we'll trust it — fine for
+    audit ("at least one of these IPs touched this row"), unsafe for
+    "block this IP after 10 failed logins" (attacker would rotate XFF).
+    Rate limiting needs `request.client.host` (the real TCP peer) plus a
+    trusted-proxy allowlist before honoring forwarded-for headers.
     """
     fwd = request.headers.get("x-forwarded-for")
     if fwd:

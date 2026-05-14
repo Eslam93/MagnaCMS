@@ -66,7 +66,18 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    """Constant-time compare via bcrypt. Returns False on any error."""
+    """Constant-time compare via bcrypt. Returns False on any error.
+
+    Inputs longer than `_PASSWORD_MAX_BYTES` (72) bytes are rejected
+    explicitly. bcrypt silently truncates beyond that limit, which would
+    let a user authenticate with "their first 72 bytes + arbitrary trailing
+    garbage" — a footgun, not a vulnerability, but worth closing. Timing
+    parity (unknown-email vs wrong-password) is preserved: this early-exit
+    only fires for inputs that could never have been registered, so it
+    doesn't leak account existence.
+    """
+    if len(password.encode("utf-8")) > _PASSWORD_MAX_BYTES:
+        return False
     try:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except (ValueError, TypeError):

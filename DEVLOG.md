@@ -23,7 +23,7 @@ Every failure path now produces the same shape:
 }
 ```
 
-This means clients have exactly one shape to handle. `AppException` is the base, with subclasses for `NotFound`, `Unauthorized`, `Forbidden`, `Conflict`, `RateLimit`, `Provider`. Four handlers cover the universe: app exceptions, Starlette HTTP exceptions, Pydantic validation errors, and a catch-all for anything that escapes. The `request_id` flows through every envelope so support requests can quote it directly.
+This means clients have exactly one shape to handle. `AppException` is the base, with subclasses for `NotFound`, `Unauthorized`, `Forbidden`, `Conflict`, `RateLimit`, `Provider`. Four handlers cover the universe: app exceptions, Starlette HTTP exceptions, Pydantic validation errors, and a catch-all for anything that escapes. The `request_id` flows through every envelope on handled paths (everything except bare uncaught exceptions, where FastAPI's per-route exception machinery runs the handler in a context our middleware can't yet reach — logs still carry the id; envelope on those paths may not. Tracked as a future hardening pass).
 
 ### Async Alembic is a copy-paste recipe — but mostly
 
