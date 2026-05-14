@@ -1,0 +1,83 @@
+"""Security response headers middleware.
+
+Applies a baseline of headers every browser expects from a production
+service. The values are conservative — tighter CSP, longer HSTS preload,
+and proper Permissions-Policy lockdown land in P11.5 once we have a
+real frontend and can measure what breaks.
+
+`Strict-Transport-Security` is only applied outside `local` — telling
+a browser to require TLS on `localhost` makes the dev server unusable
+on a fresh laptop. `dev` (the shared cloud env) is treated like prod.
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.core.config import Environment, get_settings
+
+# A baseline CSP. The unsafe-inline + jsdelivr exceptions exist because
+# FastAPI's Swagger UI bundles scripts and styles from a CDN with
+# inline initializers — tightening this is a P11.5 problem and is
+# tracked there. For API-only deploys (no /docs), most of this would
+# collapse to `default-src 'none'; frame-ancestors 'none'`.
+_BASELINE_CSP: Final[str] = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "font-src 'self' https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+# HSTS: 6 months, no preload, no subdomain inclusion until we own all
+# subdomains. Browsers respect this header only over HTTPS responses.
+_HSTS_VALUE: Final[str] = "max-age=15552000"
+
+_STATIC_HEADERS: Final[dict[bytes, bytes]] = {
+    b"x-content-type-options": b"nosniff",
+    b"x-frame-options": b"DENY",
+    b"referrer-policy": b"strict-origin-when-cross-origin",
+    b"content-security-policy": _BASELINE_CSP.encode("ascii"),
+    b"permissions-policy": b"camera=(), microphone=(), geolocation=()",
+}
+
+
+class SecurityHeadersMiddleware:
+    """Pure-ASGI middleware that attaches a small set of security
+    headers to every HTTP response.
+
+    Matches the pure-ASGI shape of `RequestIDMiddleware` rather than
+    using BaseHTTPMiddleware — same rationale as P1.5.1's middleware
+    rewrite: BaseHTTPMiddleware's task-spawning interferes with
+    contextvar visibility for downstream readers, and we don't need
+    any of its conveniences here.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+        self._include_hsts = get_settings().environment != Environment.LOCAL
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                existing = {name for name, _ in headers}
+                for name, value in _STATIC_HEADERS.items():
+                    if name not in existing:
+                        headers.append((name, value))
+                if self._include_hsts and b"strict-transport-security" not in existing:
+                    headers.append((b"strict-transport-security", _HSTS_VALUE.encode("ascii")))
+                message["headers"] = headers
+            await send(message)
+
+        await self._app(scope, receive, send_with_headers)

@@ -7,19 +7,26 @@ below reads outer-to-inner along the request path:
 
   1. CORS (last added, outermost) — preflights short-circuit before any
      other middleware allocates work.
-  2. RequestID                    — binds `X-Request-ID` into the contextvar.
-  3. AccessLog (first added, innermost) — reads the bound request_id from
+  2. RateLimit                    — rejects 429 before the request reaches
+                                    auth code; bound IP is the real TCP
+                                    peer (forwarded-for is unsafe as
+                                    rate-limit identity until P11.x).
+  3. SecurityHeaders              — adds nosniff / DENY / CSP / HSTS to
+                                    every response on its way out.
+  4. RequestID                    — binds `X-Request-ID` into the contextvar.
+  5. AccessLog (first added, innermost) — reads the bound request_id from
      the contextvar so every log line carries it.
-  4. Exception handlers           — consistent {error, meta} envelope on
+  6. Exception handlers           — consistent {error, meta} envelope on
                                     every failure path; runs inside the
                                     middleware stack.
-  5. v1 router                    — mounted at /api/v1.
+  7. v1 router                    — mounted at /api/v1.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Final
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +37,20 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.db.session import close_db_engine
 from app.middleware.logging import AccessLogMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.request_id import REQUEST_ID_HEADER, RequestIDMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+
+# Per-path requests-per-minute caps. /auth/login + /auth/register are
+# the brief's explicit targets; /auth/refresh is added because the
+# security-review pass on P1.6 flagged the unauthenticated endpoint as
+# a token-space probing surface. P11.3 will swap this for a Redis-
+# backed sliding window with per-account dimensions.
+_AUTH_RATE_LIMITS: Final[dict[str, int]] = {
+    "/api/v1/auth/login": 10,
+    "/api/v1/auth/register": 10,
+    "/api/v1/auth/refresh": 10,
+}
 
 
 @asynccontextmanager
@@ -66,6 +86,8 @@ def create_app() -> FastAPI:
     # everything else (Starlette's documented ordering).
     app.add_middleware(AccessLogMiddleware)  # innermost — runs last on the way out
     app.add_middleware(RequestIDMiddleware)  # binds contextvar before AccessLog reads it
+    app.add_middleware(SecurityHeadersMiddleware)  # adds security headers on responses
+    app.add_middleware(RateLimitMiddleware, rules=_AUTH_RATE_LIMITS)
     app.add_middleware(
         CORSMiddleware,  # outermost — preflights short-circuit before anything else
         allow_origins=settings.cors_origins,
