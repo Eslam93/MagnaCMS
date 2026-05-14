@@ -100,18 +100,24 @@ Once deployed, the OpenAPI 3.1 spec is auto-published:
 - **ReDoc:** `<api-url>/redoc`
 - **Raw spec:** `<api-url>/openapi.json`
 
-Endpoint summary:
+### Available today
 
 | Group | Endpoints |
 |---|---|
-| Auth | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` |
+| Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me` |
+| System | `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /redoc` |
+
+### Planned
+
+| Group | Endpoints |
+|---|---|
+| Auth | `POST /auth/refresh`, `POST /auth/logout` |
 | Content | `POST /content/generate`, `GET /content`, `GET /content/:id`, `DELETE /content/:id`, `POST /content/:id/restore` |
 | Images | `POST /content/:id/image`, `GET /content/:id/images` |
 | Improver | `POST /improve`, `GET /improvements`, `GET /improvements/:id`, `DELETE /improvements/:id` |
 | Brand voices | full CRUD at `/brand-voices` |
 | Usage | `GET /usage/summary` |
 | Exports | `GET /content/:id/export?format=pdf\|docx\|markdown` |
-| System | `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /redoc` |
 
 ## 7. Repository layout
 

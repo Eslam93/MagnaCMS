@@ -21,6 +21,7 @@ from app.core.security import (
     PasswordTooWeakError,
     create_access_token,
     generate_refresh_token,
+    get_dummy_password_hash,
     hash_password,
     validate_password_strength,
     verify_password,
@@ -91,10 +92,16 @@ class AuthService:
         ip_address: str | None = None,
     ) -> tuple[User, AuthTokens]:
         user = await self._users.find_by_email(email)
-        # Same error for "no such user" and "wrong password" — never leak
-        # which one to a caller. The cost of a wasted bcrypt verify when the
-        # user doesn't exist is the price of timing-equivalence.
-        if user is None or not verify_password(password, user.password_hash):
+        # ALWAYS run bcrypt verify, even when the email is unknown — use a
+        # cached dummy hash for the missing case. Without this, the unknown
+        # email path returns in ~5ms and the wrong-password path in ~250ms,
+        # making registered emails distinguishable by latency. Same response
+        # body + same compute cost = no enumeration via timing.
+        password_ok = verify_password(
+            password,
+            user.password_hash if user is not None else get_dummy_password_hash(),
+        )
+        if user is None or not password_ok:
             raise UnauthorizedError("Invalid email or password.", code="INVALID_CREDENTIALS")
         await self._users.touch_last_login(user)
         tokens = await self._mint_tokens(user, user_agent=user_agent, ip_address=ip_address)

@@ -30,9 +30,15 @@ def stub_dependency_probes(monkeypatch: MonkeyPatch) -> None:
 
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
-    """An httpx AsyncClient bound directly to the ASGI app (in-process)."""
+    """An httpx AsyncClient bound directly to the ASGI app (in-process).
+
+    `raise_app_exceptions=False` makes ASGITransport convert unhandled app
+    exceptions to 500 responses rather than re-raising them into the test —
+    matches real wire behavior, and lets us assert on the {error, meta}
+    envelope produced by our catch-all Exception handler.
+    """
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://test",
     ) as ac:
         yield ac
