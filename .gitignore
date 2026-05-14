@@ -15,6 +15,9 @@ OpenAIKey.txt
 .aws/
 .boto
 
+# Internal planning / working notes — local-only.
+.private/
+
 # ──────────────────────────────────────────────────────────────────────
 # Python (backend/)
 # ──────────────────────────────────────────────────────────────────────
