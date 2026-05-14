@@ -1,0 +1,658 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`ComputeStack (dev) matches snapshot 1`] = `
+{
+  "Outputs": {
+    "AppRunnerServiceArn": {
+      "Export": {
+        "Name": "test-compute-apprunner-service-arn",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Service",
+          "ServiceArn",
+        ],
+      },
+    },
+    "AppRunnerServiceUrl": {
+      "Export": {
+        "Name": "test-compute-apprunner-service-url",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Service",
+          "ServiceUrl",
+        ],
+      },
+    },
+    "EcrRepoUri": {
+      "Export": {
+        "Name": "test-compute-ecr-uri",
+      },
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            {
+              "Fn::Select": [
+                4,
+                {
+                  "Fn::Split": [
+                    ":",
+                    {
+                      "Fn::GetAtt": [
+                        "BackendRepo7FFBAD06",
+                        "Arn",
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            ".dkr.ecr.",
+            {
+              "Fn::Select": [
+                3,
+                {
+                  "Fn::Split": [
+                    ":",
+                    {
+                      "Fn::GetAtt": [
+                        "BackendRepo7FFBAD06",
+                        "Arn",
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix",
+            },
+            "/",
+            {
+              "Ref": "BackendRepo7FFBAD06",
+            },
+          ],
+        ],
+      },
+    },
+    "MigrationClusterArn": {
+      "Export": {
+        "Name": "test-compute-migration-cluster-arn",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "MigrationCluster12411DBF",
+          "Arn",
+        ],
+      },
+    },
+    "MigrationTaskDefinitionArn": {
+      "Export": {
+        "Name": "test-compute-migration-task-arn",
+      },
+      "Value": {
+        "Ref": "MigrationTask69EAEF9D",
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "AppRunnerAccessRoleC89E5843": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "build.apprunner.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Description": "Service role App Runner uses to pull the ECR image",
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "AppRunnerAccessRoleDefaultPolicy4FF2CFAF": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "BackendRepo7FFBAD06",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": "ecr:GetAuthorizationToken",
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "AppRunnerAccessRoleDefaultPolicy4FF2CFAF",
+        "Roles": [
+          {
+            "Ref": "AppRunnerAccessRoleC89E5843",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "AppRunnerInstanceRole96A5A063": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "tasks.apprunner.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Description": "Runtime role assumed by the App Runner backend service",
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "AppRunnerInstanceRoleDefaultPolicy35195718": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "secretsmanager:GetSecretValue",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefJwtSecretB8834B392B9A9162",
+                },
+                {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefOpenaiApiKeySecret330F502FA86B3F79",
+                },
+                {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+                },
+              ],
+            },
+            {
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::ImportValue": "test-data:ExportsOutputFnGetAttImagesBucket1E86AFB2Arn58FEFB4A",
+                    },
+                    "/*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": "s3:ListBucket",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::ImportValue": "test-data:ExportsOutputFnGetAttImagesBucket1E86AFB2Arn58FEFB4A",
+              },
+            },
+            {
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+              ],
+              "Effect": "Allow",
+              "Resource": "arn:aws:logs:us-east-1:*:log-group:/aws/apprunner/*",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "AppRunnerInstanceRoleDefaultPolicy35195718",
+        "Roles": [
+          {
+            "Ref": "AppRunnerInstanceRole96A5A063",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "BackendRepo7FFBAD06": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "EmptyOnDelete": true,
+        "ImageTagMutability": "MUTABLE",
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": "{"rules":[{"rulePriority":1,"description":"Keep last 10 images, remove older","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}",
+        },
+        "RepositoryName": "magnacms-dev-backend",
+      },
+      "Type": "AWS::ECR::Repository",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "MigrationCluster12411DBF": {
+      "Properties": {
+        "ClusterName": "magnacms-dev-migrations",
+      },
+      "Type": "AWS::ECS::Cluster",
+    },
+    "MigrationTask69EAEF9D": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Command": [
+              "uv",
+              "run",
+              "alembic",
+              "upgrade",
+              "head",
+            ],
+            "Environment": [
+              {
+                "Name": "ENVIRONMENT",
+                "Value": "dev",
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": "us-east-1",
+              },
+            ],
+            "Essential": true,
+            "Image": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Fn::Select": [
+                      4,
+                      {
+                        "Fn::Split": [
+                          ":",
+                          {
+                            "Fn::GetAtt": [
+                              "BackendRepo7FFBAD06",
+                              "Arn",
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  ".dkr.ecr.",
+                  {
+                    "Fn::Select": [
+                      3,
+                      {
+                        "Fn::Split": [
+                          ":",
+                          {
+                            "Fn::GetAtt": [
+                              "BackendRepo7FFBAD06",
+                              "Arn",
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  ".",
+                  {
+                    "Ref": "AWS::URLSuffix",
+                  },
+                  "/",
+                  {
+                    "Ref": "BackendRepo7FFBAD06",
+                  },
+                  ":latest",
+                ],
+              ],
+            },
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "MigrationTaskmigrateLogGroup121BE525",
+                },
+                "awslogs-region": "us-east-1",
+                "awslogs-stream-prefix": "alembic",
+              },
+            },
+            "Name": "migrate",
+            "Secrets": [
+              {
+                "Name": "RDS_SECRET_ARN",
+                "ValueFrom": {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+                },
+              },
+            ],
+          },
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "MigrationTaskExecutionRole54576998",
+            "Arn",
+          ],
+        },
+        "Family": "magnacms-dev-migrate",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE",
+        ],
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "MigrationTaskTaskRole9CC4695E",
+            "Arn",
+          ],
+        },
+      },
+      "Type": "AWS::ECS::TaskDefinition",
+    },
+    "MigrationTaskExecutionRole54576998": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "MigrationTaskExecutionRoleDefaultPolicy91A4C2FE": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "BackendRepo7FFBAD06",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": "ecr:GetAuthorizationToken",
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "MigrationTaskmigrateLogGroup121BE525",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "MigrationTaskExecutionRoleDefaultPolicy91A4C2FE",
+        "Roles": [
+          {
+            "Ref": "MigrationTaskExecutionRole54576998",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "MigrationTaskTaskRole9CC4695E": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "MigrationTaskmigrateLogGroup121BE525": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "RetentionInDays": 14,
+      },
+      "Type": "AWS::Logs::LogGroup",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "Service": {
+      "Properties": {
+        "HealthCheckConfiguration": {
+          "HealthyThreshold": 1,
+          "Interval": 10,
+          "Path": "/api/v1/health",
+          "Protocol": "HTTP",
+          "Timeout": 5,
+          "UnhealthyThreshold": 5,
+        },
+        "InstanceConfiguration": {
+          "Cpu": "0.25 vCPU",
+          "InstanceRoleArn": {
+            "Fn::GetAtt": [
+              "AppRunnerInstanceRole96A5A063",
+              "Arn",
+            ],
+          },
+          "Memory": "0.5 GB",
+        },
+        "NetworkConfiguration": {
+          "EgressConfiguration": {
+            "EgressType": "DEFAULT",
+          },
+        },
+        "ServiceName": "magnacms-dev-backend",
+        "SourceConfiguration": {
+          "AuthenticationConfiguration": {
+            "AccessRoleArn": {
+              "Fn::GetAtt": [
+                "AppRunnerAccessRoleC89E5843",
+                "Arn",
+              ],
+            },
+          },
+          "AutoDeploymentsEnabled": false,
+          "ImageRepository": {
+            "ImageConfiguration": {
+              "Port": "8000",
+              "RuntimeEnvironmentSecrets": [
+                {
+                  "Name": "JWT_SECRET",
+                  "Value": {
+                    "Fn::ImportValue": "test-data:ExportsOutputRefJwtSecretB8834B392B9A9162",
+                  },
+                },
+                {
+                  "Name": "OPENAI_API_KEY",
+                  "Value": {
+                    "Fn::ImportValue": "test-data:ExportsOutputRefOpenaiApiKeySecret330F502FA86B3F79",
+                  },
+                },
+                {
+                  "Name": "RDS_SECRET_ARN",
+                  "Value": {
+                    "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+                  },
+                },
+              ],
+              "RuntimeEnvironmentVariables": [
+                {
+                  "Name": "ENVIRONMENT",
+                  "Value": "dev",
+                },
+                {
+                  "Name": "AWS_REGION",
+                  "Value": "us-east-1",
+                },
+                {
+                  "Name": "AI_PROVIDER_MODE",
+                  "Value": "openai",
+                },
+                {
+                  "Name": "USE_REDIS",
+                  "Value": "true",
+                },
+                {
+                  "Name": "LOG_LEVEL",
+                  "Value": "INFO",
+                },
+                {
+                  "Name": "S3_BUCKET_IMAGES",
+                  "Value": {
+                    "Fn::ImportValue": "test-data:ExportsOutputRefImagesBucket1E86AFB213EE8BEC",
+                  },
+                },
+                {
+                  "Name": "CORS_ORIGINS",
+                  "Value": "http://localhost:3000",
+                },
+                {
+                  "Name": "IMAGES_CDN_BASE_URL",
+                  "Value": "",
+                },
+              ],
+            },
+            "ImageIdentifier": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Fn::Select": [
+                      4,
+                      {
+                        "Fn::Split": [
+                          ":",
+                          {
+                            "Fn::GetAtt": [
+                              "BackendRepo7FFBAD06",
+                              "Arn",
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  ".dkr.ecr.",
+                  {
+                    "Fn::Select": [
+                      3,
+                      {
+                        "Fn::Split": [
+                          ":",
+                          {
+                            "Fn::GetAtt": [
+                              "BackendRepo7FFBAD06",
+                              "Arn",
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  ".",
+                  {
+                    "Ref": "AWS::URLSuffix",
+                  },
+                  "/",
+                  {
+                    "Ref": "BackendRepo7FFBAD06",
+                  },
+                  ":latest",
+                ],
+              ],
+            },
+            "ImageRepositoryType": "ECR",
+          },
+        },
+      },
+      "Type": "AWS::AppRunner::Service",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;
