@@ -34,8 +34,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          # pnpm cache wires up in P4.1 once frontend/pnpm-lock.yaml exists.
+          # Enabling `cache: 'pnpm'` before then fails the run with "specified
+          # paths were not resolved, unable to cache dependencies" before any
+          # step runs.
 
       - name: Skeleton check (P0.4)
         # Real steps (lint/typecheck/test/build) wire up in P4.1 once package.json exists.
