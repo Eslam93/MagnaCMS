@@ -37,6 +37,9 @@ RUN groupadd --system --gid 1000 app \
 WORKDIR /app
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
 COPY --from=builder --chown=app:app /app/app ./app
+# Migration tooling needs alembic.ini + scripts at runtime.
+COPY --chown=app:app alembic.ini ./
+COPY --chown=app:app alembic ./alembic
 
 USER app
 

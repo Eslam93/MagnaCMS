@@ -21,6 +21,7 @@ from app.api.v1.router import v1_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
+from app.db.session import close_db_engine
 from app.middleware.logging import AccessLogMiddleware
 from app.middleware.request_id import REQUEST_ID_HEADER, RequestIDMiddleware
 
@@ -39,6 +40,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     )
     yield
     log.info("application_stopping")
+    await close_db_engine()
 
 
 def create_app() -> FastAPI:

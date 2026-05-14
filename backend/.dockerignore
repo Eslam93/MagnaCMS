@@ -5,6 +5,8 @@
 !pyproject.toml
 !uv.lock
 !app/**
+!alembic.ini
+!alembic/**
 !README.md
 
 # Re-exclude noise that might slip in
