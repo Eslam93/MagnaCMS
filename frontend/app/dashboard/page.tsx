@@ -23,8 +23,8 @@ export default function DashboardPlaceholder() {
     <main className="container flex min-h-screen flex-col items-center justify-center gap-6 py-12 text-center">
       <h1 className="text-3xl font-bold">Signed in</h1>
       <p className="max-w-md text-muted-foreground">
-        Auth works. The real protected layout — sidebar, nav, /me display,
-        route guard — lands in P2.9c.
+        Auth works. The real protected layout — sidebar, nav, /me display, route guard — lands in
+        P2.9c.
       </p>
       <p className="font-mono text-xs text-muted-foreground">
         access_token: {accessToken ? `${accessToken.slice(0, 24)}…` : "(none)"}
