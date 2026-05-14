@@ -1,0 +1,127 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`EdgeStack (dev) matches snapshot 1`] = `
+{
+  "Outputs": {
+    "AmplifyAppId": {
+      "Description": "Amplify app ID — connect GitHub via console post-deploy",
+      "Export": {
+        "Name": "test-edge-amplify-app-id",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Frontend",
+          "AppId",
+        ],
+      },
+    },
+    "AmplifyDefaultDomain": {
+      "Description": "Amplify default domain (paste into App Runner CORS_ORIGINS)",
+      "Export": {
+        "Name": "test-edge-amplify-domain",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "Frontend",
+          "DefaultDomain",
+        ],
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "Frontend": {
+      "Properties": {
+        "BuildSpec": "version: 1
+applications:
+  - frontend:
+      phases:
+        preBuild:
+          commands:
+            - corepack enable
+            - pnpm install --frozen-lockfile
+        build:
+          commands:
+            - pnpm build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
+    appRoot: frontend",
+        "CustomRules": [
+          {
+            "Source": "/<*>",
+            "Status": "404-200",
+            "Target": "/index.html",
+          },
+        ],
+        "Description": "MagnaCMS frontend (dev)",
+        "Name": "magnacms-dev",
+        "Tags": [
+          {
+            "Key": "environment",
+            "Value": "dev",
+          },
+          {
+            "Key": "project",
+            "Value": "magnacms",
+          },
+        ],
+      },
+      "Type": "AWS::Amplify::App",
+    },
+    "MainBranch": {
+      "Properties": {
+        "AppId": {
+          "Fn::GetAtt": [
+            "Frontend",
+            "AppId",
+          ],
+        },
+        "BranchName": "main",
+        "EnableAutoBuild": true,
+        "Framework": "Next.js - SSR",
+        "Stage": "DEVELOPMENT",
+      },
+      "Type": "AWS::Amplify::Branch",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;
