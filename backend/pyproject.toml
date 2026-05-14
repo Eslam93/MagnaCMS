@@ -1,0 +1,126 @@
+[project]
+name = "magnacms-backend"
+version = "0.1.0"
+description = "MagnaCMS — FastAPI backend"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Eslam Hamed" }]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.32,<1",
+    "pydantic[email]>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "structlog>=24.4,<25",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-cov>=6.0,<7",
+    "httpx>=0.27,<1",
+    "ruff>=0.7,<1",
+    "mypy>=1.13,<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ──────────────────────────────────────────────────────────────────────
+# Ruff — lint + format
+# ──────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # flake8-bugbear
+    "UP",            # pyupgrade
+    "N",             # pep8-naming
+    "S",             # flake8-bandit (security)
+    "A",             # flake8-builtins
+    "C4",            # flake8-comprehensions
+    "T20",           # flake8-print (no print() left behind)
+    "RUF",           # ruff-specific
+    "SIM",           # flake8-simplify
+    "TID",           # tidy-imports
+]
+ignore = [
+    "S101",  # use-of-assert is fine in tests; per-file override below
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S106", "S105"]  # asserts + hardcoded creds OK in tests
+"app/core/exceptions.py" = ["N818"]    # AppException base mirrors Python's `Exception`; subclasses do use the Error suffix
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ──────────────────────────────────────────────────────────────────────
+# mypy — strict typing
+# ──────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+# ──────────────────────────────────────────────────────────────────────
+# pytest
+# ──────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "--strict-markers",
+    "-ra",
+]
+markers = [
+    "integration: integration tests that need external services",
+]
+
+# ──────────────────────────────────────────────────────────────────────
+# coverage
+# ──────────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "app/main.py",  # entry point — covered indirectly by integration tests
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]

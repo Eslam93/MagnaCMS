@@ -1,0 +1,22 @@
+# ignore everything by default, opt back in
+**
+
+# What we actually need in the build context
+!pyproject.toml
+!uv.lock
+!app/**
+!README.md
+
+# Re-exclude noise that might slip in
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+**/.venv
+.env
+.env.*
+**/local-images
