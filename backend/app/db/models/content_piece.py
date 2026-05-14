@@ -57,8 +57,12 @@ class ContentPiece(SoftDeleteMixin, TimestampedMixin, Base):
             "user_id",
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        # The GIN full-text index on `rendered_text` is added in the P1.4
-        # migration (op.execute) since autogenerate cannot express it.
+        # GIN full-text expression index — drives `?q=` dashboard search.
+        Index(
+            "ix_content_pieces_rendered_text_fts",
+            text("to_tsvector('english', rendered_text)"),
+            postgresql_using="gin",
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

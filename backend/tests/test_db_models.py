@@ -110,6 +110,13 @@ def test_content_piece_indexes() -> None:
     assert "ix_content_pieces_user_id_created_at" in index_names
     assert "ix_content_pieces_user_id_content_type" in index_names
     assert "ix_content_pieces_user_id_active" in index_names
+    # GIN full-text expression index — declared on the model so autogenerate
+    # sees parity with the live DB.
+    assert "ix_content_pieces_rendered_text_fts" in index_names
+    fts = next(
+        i for i in ContentPiece.__table__.indexes if i.name == "ix_content_pieces_rendered_text_fts"
+    )
+    assert fts.dialect_kwargs.get("postgresql_using") == "gin"
 
 
 def test_generated_image_shape() -> None:
