@@ -21,6 +21,7 @@ import { loadConfig } from "../lib/config";
 import { DataStack } from "../lib/data-stack";
 import { EdgeStack } from "../lib/edge-stack";
 import { NetworkStack } from "../lib/network-stack";
+import { ObservabilityStack } from "../lib/observability-stack";
 
 const app = new cdk.App();
 const envName = app.node.tryGetContext("env") ?? "dev";
@@ -64,9 +65,17 @@ const edge = new EdgeStack(app, `magnacms-${envName}-edge`, {
   cfg,
 });
 
-// Downstream stacks (lands in subsequent PRs):
-//   new ObservabilityStack(app, `magnacms-${envName}-observability`, { env: awsEnv, cfg, compute });
+const observability = new ObservabilityStack(
+  app,
+  `magnacms-${envName}-observability`,
+  {
+    env: awsEnv,
+    cfg,
+  },
+);
+
 void compute;
 void edge;
+void observability;
 
 app.synth();
