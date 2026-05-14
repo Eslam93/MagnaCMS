@@ -1,8 +1,8 @@
-# AI Content Marketing Suite
+# MagnaCMS — AI Content Marketing Suite
 
 A production-grade SaaS that helps marketers generate, manage, and improve marketing content using AI. Every generated piece can be paired with an AI-generated image in one flow.
 
-> **Status:** Phase 0 (Bootstrap) — repo skeleton ready. Sections marked _(pending P_X_)_ will fill in as the corresponding phase ships. See [`PHASES.md`](./PHASES.md) for the full task list.
+> **Status:** in active development. The repo is functional from day one — see the dev log for what works today vs. what's next.
 
 ![CI – Backend](https://img.shields.io/badge/backend--ci-pending-lightgrey) ![CI – Frontend](https://img.shields.io/badge/frontend--ci-pending-lightgrey) ![Deploy](https://img.shields.io/badge/deploy-pending-lightgrey) ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -10,9 +10,7 @@ A production-grade SaaS that helps marketers generate, manage, and improve marke
 
 ## 1. Live demo
 
-- **Live URL:** _(pending P2.7 — App Runner + Amplify go live on Day 5–6)_
-- **Demo credentials:** _(pending P12.4 — seeded reviewer account)_
-- **Screenshot / GIF:** _(pending P12.1)_
+_Coming soon._ The deployed URL and a seeded demo account will appear here once the backend lands on AWS.
 
 ## 2. What it does
 
@@ -41,12 +39,13 @@ Five core flows:
 | Observability | structlog + CloudWatch + Sentry |
 | CI/CD | GitHub Actions |
 
-The full rationale lives in [`PROJECT_BRIEF.md`](./PROJECT_BRIEF.md) §2.
+Rationale for each pick is in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## 4. Quick start (local)
 
 ```bash
-git clone <repo> && cd MagnaCMS
+git clone https://github.com/Eslam93/MagnaCMS.git
+cd MagnaCMS
 cp .env.example .env
 # Fill in OPENAI_API_KEY and JWT_SECRET. Everything else has sane defaults.
 docker-compose up --build
@@ -56,12 +55,12 @@ Services come up on:
 
 | Service | URL |
 |---|---|
-| Frontend (stub until P4.1) | http://localhost:3000 |
-| Backend (stub until P1.1) | http://localhost:8000 |
+| Frontend | http://localhost:3000 |
+| Backend | http://localhost:8000 |
 | Postgres | `localhost:5432` (user/pass: `app` / `app`) |
 | Redis | `localhost:6379` |
 
-Once Phase 1 lands, you'll additionally run:
+Once the backend application code lands you'll additionally run:
 
 ```bash
 docker-compose exec backend alembic upgrade head
@@ -85,23 +84,23 @@ api.<domain>
   ▼
 App Runner — FastAPI containers (auto-scale, PUBLIC egress, no VPC connector)
   │
-  ├──→ RDS Postgres (strict SG)
+  ├──→ RDS Postgres (strict SG, public endpoint with App-Runner-IP allowlist)
   ├──→ ElastiCache Redis (rate limit, cache, idempotency, refresh-token blocklist)
   ├──→ OpenAI API (gpt-5.4-mini text, gpt-image-1 image)
   └──→ S3 (persist generated images)
 ```
 
-Full diagram + rationale in [`PROJECT_BRIEF.md`](./PROJECT_BRIEF.md) §3 and [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+Full rationale and key trade-offs: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## 6. API documentation
 
-OpenAPI 3.1 spec auto-published once the backend is live:
+Once deployed, the OpenAPI 3.1 spec is auto-published:
 
-- **Swagger UI:** `<live-api-url>/docs` _(pending P2.7)_
-- **ReDoc:** `<live-api-url>/redoc` _(pending P2.7)_
-- **Raw spec:** `<live-api-url>/openapi.json`
+- **Swagger UI:** `<api-url>/docs`
+- **ReDoc:** `<api-url>/redoc`
+- **Raw spec:** `<api-url>/openapi.json`
 
-Endpoint summary (target shape — see brief §6 for full contract):
+Endpoint summary:
 
 | Group | Endpoints |
 |---|---|
@@ -109,29 +108,25 @@ Endpoint summary (target shape — see brief §6 for full contract):
 | Content | `POST /content/generate`, `GET /content`, `GET /content/:id`, `DELETE /content/:id`, `POST /content/:id/restore` |
 | Images | `POST /content/:id/image`, `GET /content/:id/images` |
 | Improver | `POST /improve`, `GET /improvements`, `GET /improvements/:id`, `DELETE /improvements/:id` |
-| Brand voices | `GET /brand-voices`, `POST /brand-voices`, `GET /brand-voices/:id`, `PATCH /brand-voices/:id`, `DELETE /brand-voices/:id` |
+| Brand voices | full CRUD at `/brand-voices` |
 | Usage | `GET /usage/summary` |
 | Exports | `GET /content/:id/export?format=pdf\|docx\|markdown` |
 | System | `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /redoc` |
 
-## 7. Project structure
+## 7. Repository layout
 
 ```
 MagnaCMS/
 ├── README.md                  # this file
-├── PROJECT_BRIEF.md           # source of truth for architecture/contract
-├── PHASES.md                  # task-level breakdown across 13 phases
-├── ARCHITECTURE.md            # one-page key trade-offs + cost estimate
-├── KICKOFF_PROMPT.md          # working agreement (historical)
+├── ARCHITECTURE.md            # key trade-offs + cost estimate
+├── DEVLOG.md                  # running journal of decisions and progress
 ├── docker-compose.yml         # local-dev orchestration
 ├── .env.example               # environment template
 ├── .github/workflows/         # CI pipelines
-├── backend/                   # FastAPI service (Phase 1+)
-├── frontend/                  # Next.js App Router (Phase 4+)
-└── infra/                     # AWS CDK in TypeScript (Phase 2+)
+├── backend/                   # FastAPI service
+├── frontend/                  # Next.js App Router
+└── infra/                     # AWS CDK in TypeScript
 ```
-
-Annotated tree with internal layout per service: [`PROJECT_BRIEF.md`](./PROJECT_BRIEF.md) §4.
 
 ## 8. Environment variables
 
@@ -139,7 +134,7 @@ Annotated tree with internal layout per service: [`PROJECT_BRIEF.md`](./PROJECT_
 |---|---|---|---|
 | `AI_PROVIDER_MODE` | yes | `openai` | `openai` / `bedrock` / `mock` |
 | `OPENAI_API_KEY` | yes (unless mode=mock) | — | OpenAI key, prepaid |
-| `OPENAI_TEXT_MODEL` | no | `gpt-5.4-mini-2026-03-17` | Pinned model ID |
+| `OPENAI_TEXT_MODEL` | no | `gpt-5.4-mini-2026-03-17` | Pinned text model |
 | `OPENAI_IMAGE_MODEL` | no | `gpt-image-1` | Image gen model |
 | `OPENAI_IMAGE_QUALITY` | no | `medium` | `low` / `medium` / `high` |
 | `DATABASE_URL` | yes | local compose default | asyncpg connection string |
@@ -159,8 +154,6 @@ Full annotated set in [`.env.example`](./.env.example).
 
 ## 9. Running tests
 
-_(pending P1.8 / P3.9 / P10.8)_
-
 ```bash
 # Backend
 cd backend && uv run pytest --cov=app --cov-fail-under=80
@@ -174,9 +167,7 @@ cd frontend && pnpm playwright test
 
 ## 10. Deployment
 
-_(pending P2.7 / P2.8)_
-
-Single command tears it up:
+Infrastructure is defined in [`infra/`](./infra/) using AWS CDK. Single command:
 
 ```bash
 cd infra && npm install && npx cdk deploy --all
@@ -188,26 +179,18 @@ Teardown: `npx cdk destroy --all` (plus separate Amplify app deletion).
 
 ## 11. Architecture decisions
 
-Key trade-offs are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Headline calls:
+Detailed in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Headlines:
 
-- **OpenAI direct over AWS Bedrock** — eliminated model-access friction (Anthropic use-case form, Nova Canvas LEGACY status); single key covers text + image. Bedrock retained as documented alternative.
-- **No VPC connector on App Runner** — keeps Bedrock/S3/Secrets-Manager APIs reachable without NAT Gateway cost.
-- **Public RDS with strict SG** — explicit allowlist beats the complexity of VPC connector + VPC endpoints for a short-lived demo.
-- **Custom JWT over Cognito** — full control over refresh rotation + token blocklist; fewer moving parts in the IAM story.
+- **OpenAI direct over AWS Bedrock** — one key covers text + image, no Anthropic use-case form, no Nova Canvas LEGACY/EOL story.
+- **No VPC connector on App Runner** — keeps AWS APIs and OpenAI reachable without NAT Gateway.
+- **Public RDS with strict SG** — explicit IP allowlist beats VPC complexity for the current scope.
+- **Custom JWT over Cognito** — full control over refresh rotation + Redis blocklist; smaller IAM surface.
 - **Non-streaming content generation** — structured JSON outputs don't stream cleanly; staged loading UI gives the perceived-performance benefit without the bug surface.
 
-## 12. What I'd build next
+## 12. Development log
 
-_(pending P12.1)_
+See [`DEVLOG.md`](./DEVLOG.md) — an ongoing journal of decisions, trade-offs, and progress (newest entries first). Includes actual elapsed time per phase as the project moves forward.
 
-Priority extras if time permits: password reset, A/B prompt testing, content calendar, Nova Image v2 migration plan (Nova Canvas EOL 2026-09-30).
-
-## 13. Claude Code workflow
-
-_(pending P12.6 — video shows real Claude Code segments from development)_
-
-This project was built primarily with Claude Code. Working agreement: one task = one branch = one PR; conventional commits; draft PRs early; brief is source of truth and updated in the same PR as any contract-changing code.
-
-## 14. License
+## 13. License
 
 [MIT](./LICENSE).
