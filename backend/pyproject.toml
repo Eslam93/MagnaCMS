@@ -17,6 +17,7 @@ dependencies = [
     "alembic>=1.14,<2",
     "bcrypt>=4.2,<5",
     "pyjwt[crypto]>=2.9,<3",
+    "openai>=1.50,<2",
 ]
 
 [dependency-groups]
@@ -60,12 +61,16 @@ select = [
     "TID",           # tidy-imports
 ]
 ignore = [
-    "S101",  # use-of-assert is fine in tests; per-file override below
+    "S101",   # use-of-assert is fine in tests; per-file override below
+    "RUF001", # ambiguous Unicode in identifiers — we don't use it; rule covers cases ruff is too eager about
+    "RUF002", # ambiguous Unicode in docstrings — em-dash/×/etc. are intentional house style
+    "RUF003", # ambiguous Unicode in comments — same intent
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S107"]  # asserts + hardcoded creds OK in tests
 "app/core/exceptions.py" = ["N818"]    # AppException base mirrors Python's `Exception`; subclasses do use the Error suffix
+"app/providers/errors.py" = ["N818"]   # Same pattern: ProviderError base + descriptive subclasses
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
