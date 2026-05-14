@@ -1,0 +1,150 @@
+"""Per-path, per-IP in-memory rate limit middleware.
+
+MVP-grade: a fixed-window counter keyed on `(path, ip)`. Survives until
+P11.3 swaps in a Redis-backed sliding window that works across
+processes and outlives restarts.
+
+Scope:
+  - Only the configured paths get rate-limited; everything else is a
+    pass-through.
+  - The "ip" identity is the real TCP peer (`scope["client"]`), NOT a
+    forwarded-for header. Until we sit behind a proxy with a trusted
+    XFF allowlist (P11.x), trusting client-supplied headers as security
+    identity is a free DoS / impersonation vector. The audit-only XFF
+    helper in `app/api/v1/routers/auth.py` is correctly NOT used here.
+
+429 responses carry `Retry-After` (seconds) plus the project's standard
+{error, meta} envelope.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from time import monotonic
+from typing import Final
+
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from app.core.request_context import get_request_id
+
+# Window length. Matches the brief's "per minute" framing.
+_WINDOW_SECONDS: Final[int] = 60
+
+# Hard cap on the number of (path, ip) buckets we'll keep in memory.
+# Without this, an attacker spamming distinct source IPs would balloon
+# memory. When the cap is hit, the LEAST-recently-touched key gets
+# evicted. P11.3's Redis version makes this irrelevant.
+_MAX_BUCKETS: Final[int] = 50_000
+
+
+class _Bucket:
+    """A per-(path, ip) sliding-window timestamp list plus an
+    insertion-order hint for LRU eviction."""
+
+    __slots__ = ("last_touch", "timestamps")
+
+    def __init__(self) -> None:
+        self.timestamps: list[float] = []
+        self.last_touch: float = monotonic()
+
+
+_BUCKETS: dict[tuple[str, str], _Bucket] = defaultdict(_Bucket)
+
+
+def reset_rate_limit_state() -> None:
+    """Wipe all bucket state. Tests call this between cases; production
+    code never needs it."""
+    _BUCKETS.clear()
+
+
+def _prune_oldest_buckets_if_over_cap() -> None:
+    """Evict the least-recently-touched buckets when the global cap is hit.
+
+    Cheap-enough heuristic: at the cap, drop the oldest 10% in one
+    pass to amortize the work.
+    """
+    if len(_BUCKETS) < _MAX_BUCKETS:
+        return
+    target_drops = _MAX_BUCKETS // 10
+    sorted_items = sorted(_BUCKETS.items(), key=lambda kv: kv[1].last_touch)
+    for key, _ in sorted_items[:target_drops]:
+        _BUCKETS.pop(key, None)
+
+
+def _envelope_429(retry_after: int) -> bytes:
+    """Build the JSON body for a 429 response that matches the project's
+    standard error envelope shape.
+    """
+    import json
+
+    body = {
+        "error": {
+            "code": "RATE_LIMITED",
+            "message": "Too many requests.",
+            "details": {"retry_after_seconds": retry_after},
+        },
+        "meta": {"request_id": get_request_id()},
+    }
+    return json.dumps(body).encode("utf-8")
+
+
+class RateLimitMiddleware:
+    """ASGI middleware enforcing per-(path, ip) request budgets.
+
+    Construct with a `rules` dict mapping exact path strings to a
+    requests-per-window cap. Paths not in the dict are not limited.
+    """
+
+    def __init__(self, app: ASGIApp, *, rules: dict[str, int]) -> None:
+        self._app = app
+        self._rules = rules
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        limit = self._rules.get(path)
+        if limit is None:
+            await self._app(scope, receive, send)
+            return
+
+        client = scope.get("client")
+        ip = client[0] if client else "unknown"
+
+        now = monotonic()
+        key = (path, ip)
+        bucket = _BUCKETS[key]
+        bucket.last_touch = now
+
+        # Prune timestamps that fell out of the window.
+        cutoff = now - _WINDOW_SECONDS
+        while bucket.timestamps and bucket.timestamps[0] < cutoff:
+            bucket.timestamps.pop(0)
+
+        if len(bucket.timestamps) >= limit:
+            retry_after = max(1, int(bucket.timestamps[0] + _WINDOW_SECONDS - now))
+            body = _envelope_429(retry_after)
+            await self._send_429(send, body=body, retry_after=retry_after)
+            return
+
+        bucket.timestamps.append(now)
+        _prune_oldest_buckets_if_over_cap()
+        await self._app(scope, receive, send)
+
+    @staticmethod
+    async def _send_429(send: Send, *, body: bytes, retry_after: int) -> None:
+        headers: list[tuple[bytes, bytes]] = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"retry-after", str(retry_after).encode("ascii")),
+        ]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 429,
+                "headers": headers,
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
