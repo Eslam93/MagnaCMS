@@ -6,11 +6,21 @@
  * the backend is live, a hand-stubbed `paths` type lives there and
  * gets replaced on first gen.
  *
- * The client always sends `credentials: 'include'` so the httpOnly
- * refresh cookie flows on cross-origin requests once Amplify + App
- * Runner are wired. A 401 interceptor (P2.9b) will call
- * `/auth/refresh` and retry the original request once before bouncing
- * the user to /login.
+ * The client sends `credentials: 'include'` so the httpOnly refresh
+ * cookie flows on cross-origin requests once Amplify + App Runner
+ * are wired.
+ *
+ * 401 handling:
+ *   - On any 401 (except from /auth/* itself), the response middleware
+ *     calls /auth/refresh
+ *   - If refresh succeeds, the new access token is stored and the
+ *     original request is retried once
+ *   - If refresh fails, the access token is cleared and the response
+ *     middleware passes the original 401 through — the caller's
+ *     auth-guard hook (P2.9c) redirects to /login
+ *
+ * In-flight refreshes are deduplicated: if multiple requests 401
+ * simultaneously, they all wait on the single refresh promise.
  */
 
 import createClient, { type Middleware } from "openapi-fetch";
@@ -19,15 +29,38 @@ import type { paths } from "@/types/api";
 
 const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
-/**
- * Attach the in-memory access token to every request. Reads from the
- * Zustand auth store at request time so token rotation is picked up
- * automatically.
- */
+// Single-flight refresh — multiple concurrent 401s share one /auth/refresh
+// call. Resolves to true on success (caller retries) or false on failure.
+let inflightRefresh: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  // Lazy-import the store so SSR doesn't drag Zustand into the server bundle.
+  const { useAuthStore } = await import("@/lib/auth-store");
+  try {
+    const response = await fetch(`${baseUrl}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      useAuthStore.getState().clearAccessToken();
+      return false;
+    }
+    const data = (await response.json()) as { access_token?: string };
+    if (!data.access_token) {
+      useAuthStore.getState().clearAccessToken();
+      return false;
+    }
+    useAuthStore.getState().setAccessToken(data.access_token);
+    return true;
+  } catch {
+    useAuthStore.getState().clearAccessToken();
+    return false;
+  }
+}
+
 const authMiddleware: Middleware = {
   async onRequest({ request }) {
     if (typeof window !== "undefined") {
-      // Dynamic import avoids SSR pulling Zustand into the server bundle.
       const { useAuthStore } = await import("@/lib/auth-store");
       const token = useAuthStore.getState().accessToken;
       if (token) {
@@ -35,6 +68,46 @@ const authMiddleware: Middleware = {
       }
     }
     return request;
+  },
+
+  async onResponse({ request, response }) {
+    // Don't recurse on /auth/refresh, and skip retries on the auth
+    // endpoints the user is explicitly invoking (login/register/logout)
+    // — those 401s mean "credentials wrong", not "session expired".
+    const url = new URL(request.url);
+    const isAuthEndpoint =
+      url.pathname.endsWith("/auth/refresh") ||
+      url.pathname.endsWith("/auth/login") ||
+      url.pathname.endsWith("/auth/register") ||
+      url.pathname.endsWith("/auth/logout");
+    if (response.status !== 401 || isAuthEndpoint) {
+      return response;
+    }
+    if (typeof window === "undefined") return response;
+
+    if (!inflightRefresh) {
+      inflightRefresh = refreshAccessToken().finally(() => {
+        inflightRefresh = null;
+      });
+    }
+    const refreshed = await inflightRefresh;
+    if (!refreshed) return response;
+
+    // Retry the original request with the fresh token.
+    const { useAuthStore } = await import("@/lib/auth-store");
+    const newToken = useAuthStore.getState().accessToken;
+    const retryHeaders = new Headers(request.headers);
+    if (newToken) retryHeaders.set("authorization", `Bearer ${newToken}`);
+    const body =
+      request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : await request.clone().text();
+    return fetch(request.url, {
+      method: request.method,
+      headers: retryHeaders,
+      body,
+      credentials: "include",
+    });
   },
 };
 
@@ -44,7 +117,3 @@ export const api = createClient<paths>({
 });
 
 api.use(authMiddleware);
-
-// 401 → refresh + retry interceptor lands in P2.9b together with the
-// /auth/refresh client call. For now the client just returns the 401
-// and the caller surfaces it as "please sign in again".
