@@ -133,6 +133,25 @@ async def test_refresh_expired_token_does_not_revoke_family(monkeypatch: MonkeyP
     refresh_repo.revoke_all_for_user.assert_not_awaited()
 
 
+async def test_refresh_revoked_and_expired_token_does_not_revoke_family(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A token that's both revoked AND expired is an old cookie from a
+    logged-out session resurfacing — not a compromise signal. Reuse
+    detection must not fire, otherwise a user pulling a months-old
+    cookie out of a browser backup wipes all current sessions."""
+    service, _users, refresh_repo = _make_service_with_mocks(monkeypatch)
+    refresh_repo.consume_if_active.return_value = None
+    old_row = _make_token_row(user_id=uuid.uuid4(), revoked=True)
+    old_row.expires_at = datetime.now(UTC) - timedelta(days=30)
+    refresh_repo.find_by_hash.return_value = old_row
+
+    with pytest.raises(UnauthorizedError):
+        await service.refresh(raw_refresh="a" * 64)
+
+    refresh_repo.revoke_all_for_user.assert_not_awaited()
+
+
 async def test_refresh_success_does_not_revoke_family(monkeypatch: MonkeyPatch) -> None:
     """The happy path must not touch `revoke_all_for_user` — that's the
     nuclear option, reserved for reuse."""

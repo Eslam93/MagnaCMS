@@ -177,13 +177,24 @@ class AuthService:
     async def _handle_refresh_miss(self, token_hash: str) -> None:
         """Decide what a `consume_if_active` miss means and react.
 
-        Three causes of a miss: (1) the hash never existed, (2) the row
-        exists but was already revoked — reuse signal, (3) the row
-        exists but is expired. Only case 2 is a compromise indicator;
-        on that path we mass-revoke the user's active tokens.
+        Four causes of a miss:
+          1. The hash never existed → no action (unknown token).
+          2. Row exists, `revoked_at IS NULL`, expired → no action
+             (legitimate token that the user waited too long to refresh).
+          3. Row exists, revoked, AND would still be valid → reuse
+             signal. Mass-revoke the user's active token family.
+          4. Row exists, revoked, AND already expired → no action.
+             This is an old cookie from a logged-out session resurfacing
+             (browser cookie cache, backup restore, etc.). The attacker
+             value of an expired-and-revoked token is zero, so treating
+             it as compromise would punish users for harmless cookie
+             weirdness. Reuse detection only fires when the replayed
+             token would otherwise still grant access.
         """
         existing = await self._refresh_tokens.find_by_hash(token_hash)
         if existing is None or existing.revoked_at is None:
+            return
+        if existing.expires_at <= datetime.now(UTC):
             return
         revoked_count = await self._refresh_tokens.revoke_all_for_user(existing.user_id)
         log.warning(
