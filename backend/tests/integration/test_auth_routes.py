@@ -439,6 +439,7 @@ async def test_concurrent_refresh_only_one_session_wins(
     """
     import asyncio
     import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import delete
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -446,20 +447,14 @@ async def test_concurrent_refresh_only_one_session_wins(
     from app.repositories.refresh_token_repository import RefreshTokenRepository
 
     engine: AsyncEngine = integration_engine  # type: ignore[assignment]
+    _raw_token, hashed_token = generate_refresh_token()
 
     # Setup: create a user + a single active refresh token, committed
-    # so both concurrent sessions can see it.
-    _raw_token, hashed_token = generate_refresh_token()
-    async with AsyncSession(engine) as setup:
+    # so both concurrent sessions can see it. `expire_on_commit=False`
+    # because we re-read attributes post-commit; the default would
+    # trigger a greenlet-bridged reload that fails outside the session.
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
         user = await create_user_in_db(setup, email=f"race-{_uuid.uuid4().hex[:8]}@example.test")
-        await create_refresh_token_in_db(setup, user=user)  # extra throwaway token
-        # Replace the throwaway hash with our known one so both sessions race for it.
-        await setup.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
-        await setup.flush()
-        _row, _ = await create_refresh_token_in_db(setup, user=user)
-        # Now insert OUR target row with the deterministic hash.
-        from datetime import UTC, datetime, timedelta
-
         target = RefreshToken(
             user_id=user.id,
             token_hash=hashed_token,
@@ -472,7 +467,7 @@ async def test_concurrent_refresh_only_one_session_wins(
     try:
         # Two independent sessions race for the same hash.
         async def claim() -> _uuid.UUID | None:
-            async with AsyncSession(engine) as session:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
                 repo = RefreshTokenRepository(session)
                 claimed = await repo.consume_if_active(hashed_token)
                 await session.commit()
@@ -491,7 +486,7 @@ async def test_concurrent_refresh_only_one_session_wins(
         third = await claim()
         assert third is None
     finally:
-        async with AsyncSession(engine) as cleanup:
+        async with AsyncSession(engine, expire_on_commit=False) as cleanup:
             from app.db.models import User as UserModel
 
             await cleanup.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))

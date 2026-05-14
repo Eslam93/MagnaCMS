@@ -82,7 +82,18 @@ async def db_session(db_connection: AsyncConnection) -> AsyncIterator[AsyncSessi
 async def integration_client(
     db_session: AsyncSession,
 ) -> AsyncIterator[AsyncClient]:
-    """ASGI client with get_db_session overridden to yield the test session."""
+    """ASGI client with get_db_session overridden to yield the test session.
+
+    The rate-limit bucket store is module-level state shared across tests
+    — without an explicit reset, each test inherits the budget consumed
+    by all previous tests on the same path+IP, and the 11th register call
+    in a 60s window gets a real 429. Reset before each test so every test
+    starts with a fresh budget. Production code never resets at request
+    boundaries; only the test seam needs it.
+    """
+    from app.middleware.rate_limit import reset_rate_limit_state
+
+    reset_rate_limit_state()
 
     async def _override() -> AsyncIterator[AsyncSession]:
         yield db_session
