@@ -1,8 +1,4 @@
-"""/auth/* endpoints — register, login, current user.
-
-Refresh + logout endpoints arrive in P1.6. This module wires the refresh
-cookie shape so P1.6 can read it without further fuss.
-"""
+"""/auth/* endpoints — register, login, refresh, logout, current user."""
 
 from __future__ import annotations
 
@@ -12,6 +8,7 @@ from fastapi import APIRouter, Request, Response, status
 
 from app.api.v1.deps import CurrentUser
 from app.core.config import Environment, get_settings
+from app.core.exceptions import UnauthorizedError
 from app.db.session import DbSession
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
 from app.services.auth_service import AuthService, AuthTokens
@@ -19,6 +16,7 @@ from app.services.auth_service import AuthService, AuthTokens
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
 
 
 def _set_refresh_cookie(response: Response, tokens: AuthTokens) -> None:
@@ -38,7 +36,22 @@ def _set_refresh_cookie(response: Response, tokens: AuthTokens) -> None:
         secure=secure,
         samesite="lax",
         max_age=settings.jwt_refresh_token_ttl_seconds,
-        path="/api/v1/auth",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    """Delete the refresh cookie. Path/secure/samesite must match the
+    original `Set-Cookie` for the browser to drop it.
+    """
+    settings = get_settings()
+    secure = settings.environment != Environment.LOCAL
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        secure=secure,
+        samesite="lax",
+        httponly=True,
     )
 
 
@@ -135,6 +148,50 @@ async def login(
         access_token=tokens.access_token,
         expires_in=tokens.access_expires_in,
     )
+
+
+@router.post(
+    "/refresh",
+    response_model=AuthResponse,
+    summary="Rotate refresh token and issue a new access token",
+)
+async def refresh(
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> AuthResponse:
+    raw = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not raw:
+        raise UnauthorizedError(
+            "Refresh token cookie is missing.",
+            code="MISSING_REFRESH_TOKEN",
+        )
+    user, tokens = await AuthService(db).refresh(
+        raw_refresh=raw,
+        user_agent=_client_user_agent(request),
+        ip_address=_client_ip(request),
+    )
+    _set_refresh_cookie(response, tokens)
+    return AuthResponse(
+        user=UserResponse.model_validate(user),
+        access_token=tokens.access_token,
+        expires_in=tokens.access_expires_in,
+    )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke the refresh token and clear the cookie",
+)
+async def logout(
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> None:
+    raw = request.cookies.get(REFRESH_COOKIE_NAME)
+    await AuthService(db).logout(raw_refresh=raw)
+    _clear_refresh_cookie(response)
 
 
 @router.get(

@@ -64,7 +64,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S106", "S105"]  # asserts + hardcoded creds OK in tests
+"tests/**" = ["S101", "S105", "S106", "S107"]  # asserts + hardcoded creds OK in tests
 "app/core/exceptions.py" = ["N818"]    # AppException base mirrors Python's `Exception`; subclasses do use the Error suffix
 
 [tool.ruff.lint.isort]
