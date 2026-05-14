@@ -4,6 +4,53 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-14 — Backend foundation: skeleton, DB, schema, migration
+
+Four PRs landed in one stretch — the boring-but-load-bearing layer the rest of the app sits on. ([#104](https://github.com/Eslam93/MagnaCMS/pull/104), [#105](https://github.com/Eslam93/MagnaCMS/pull/105), [#106](https://github.com/Eslam93/MagnaCMS/pull/106), [#107](https://github.com/Eslam93/MagnaCMS/pull/107).) The shape of each was determined more by infra correctness than by feature design — small things that ruin a week if you get them wrong on Day 5.
+
+### FastAPI skeleton: middleware order matters
+
+Starlette stacks middleware in reverse-add order. So if you write `app.add_middleware(CORS); app.add_middleware(AccessLog); app.add_middleware(RequestID)`, the request flows `Request → CORS → AccessLog → RequestID → handler`. We want CORS first (preflights short-circuit) and request-ID innermost (bound _before_ any handler runs, captured by access-log on the way out). That dictates the add order — and a comment in the source so the next reader doesn't reverse it on a "cleanup."
+
+### The error envelope is a contract, not a convenience
+
+Every failure path now produces the same shape:
+
+```json
+{
+  "error":  { "code": "MACHINE_READABLE", "message": "human", "details": {...} },
+  "meta":   { "request_id": "uuid" }
+}
+```
+
+This means clients have exactly one shape to handle. `AppException` is the base, with subclasses for `NotFound`, `Unauthorized`, `Forbidden`, `Conflict`, `RateLimit`, `Provider`. Four handlers cover the universe: app exceptions, Starlette HTTP exceptions, Pydantic validation errors, and a catch-all for anything that escapes. The `request_id` flows through every envelope so support requests can quote it directly.
+
+### Async Alembic is a copy-paste recipe — but mostly
+
+The default `alembic init` template assumes sync engines. The async edition lives in the SQLAlchemy 2.0 docs — `run_async_migrations` opens an `AsyncEngine`, calls `connection.run_sync(do_run_migrations)` to hand the synchronous Alembic core a real connection. We also set `compare_type=True` + `compare_server_default=True` so autogenerate notices type drift (otherwise a `String(120) -> String(200)` change is invisible).
+
+One non-obvious bit: importing `app.db` from `alembic/env.py` is what registers every model on `Base.metadata`. Without that side-effect import, autogenerate compares the live DB against an _empty_ metadata and thinks every table needs to be dropped. The `# noqa: F401` keeps lint quiet about the "unused" import.
+
+### Two things `alembic --autogenerate` cannot do
+
+1. **`CREATE EXTENSION citext`** — Postgres extension creation isn't a `Table` op. Has to be hand-added with `op.execute("CREATE EXTENSION IF NOT EXISTS citext")` at the top of `upgrade()`, before any `CITEXT` column is referenced.
+2. **GIN expression indexes for full-text search** — `to_tsvector('english', rendered_text)` isn't a column reference; it's a SQL expression.
+
+We added _both_ — and learned a trap on the GIN index. Initial approach used `op.execute("CREATE INDEX ... USING GIN ...")` and was satisfied. But `alembic check` then flagged the index as "removed" every time it ran, because the model didn't declare it. Fix: declare the expression index on `ContentPiece.__table_args__` using `Index(name, text("to_tsvector(...)"), postgresql_using="gin")`. Now the model and the live DB agree, and `alembic check` stays clean.
+
+### Production-grade signaling: the small details
+
+- **Refresh tokens** are stored as SHA-256 hashes, never as plaintext. Single-use rotation lands in P1.6 via a conditional `UPDATE ... WHERE revoked_at IS NULL` so concurrent reuse cannot mint two new pairs.
+- **`metadata` is reserved on the SQLAlchemy `Base`**, so `UsageEvent` aliases the column attribute to `meta` while keeping the Postgres column name `metadata` — caught only by trying to declare it the obvious way.
+- **`is_current` on `generated_images`** is enforced by a partial UNIQUE index — `(content_piece_id) WHERE is_current IS TRUE`. At most one current image per content piece, guaranteed at the DB layer, no app-side coordination needed.
+- **The `users` table is intentionally not soft-deletable.** Soft delete + unique email = email-reuse-after-soft-delete collision. The brief calls this out; we honored it.
+
+### What's next
+
+Phase 1 has five tasks left: register/login (P1.5), refresh + logout + rotation (P1.6), provider abstractions with OpenAI primary + Mock fully implemented (P1.7a + P1.7b), security headers + auth rate limit (P1.9), and the test-fixture + coverage-gate consolidation pass (P1.8). The DB and the `User` / `RefreshToken` models are now ready — auth is the next thing that needs them.
+
+---
+
 ## 2026-05-14 — Bootstrap day
 
 ### Pre-flight: choosing the AI provider
