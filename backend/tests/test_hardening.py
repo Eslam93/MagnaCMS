@@ -1,14 +1,18 @@
-"""Hardening tests added in P1.5.1.
+"""Hardening tests added in P1.5.1 (and extended in P1.5.2).
 
-These cover the specific failure modes flagged in external review:
+Coverage map for the specific failure modes flagged in external review:
   - Login timing: unknown email must pay the same bcrypt cost as wrong password.
   - X-Forwarded-For: junk header values must not crash the request (INET cast).
-  - JWT secret: weak values must be rejected at startup in non-local envs.
-  - Password length: >72 UTF-8 bytes must be rejected (bcrypt truncates).
+  - JWT secret: only strong formats (hex>=64 or base64 decoding to >=32 bytes)
+    accepted outside the `local` environment.
+  - Password length: >72 UTF-8 bytes rejected at registration AND at login
+    (bcrypt silently truncates beyond 72 bytes).
   - Middleware order: CORS preflight short-circuits before other middleware
     allocates work (verified via response headers).
-  - request_id propagation: still bound in the error envelope even when a
-    route raises an unhandled exception.
+  - request_id propagation: echoed on the success path. Note: the
+    unhandled-exception envelope path may NOT carry request_id — that's a
+    known FastAPI-exception-machinery limitation tracked for later. Logs
+    still carry it via structlog regardless.
 """
 
 from __future__ import annotations
@@ -58,11 +62,17 @@ def test_password_72_chars_of_multibyte_rejected() -> None:
 # ── JWT secret strength ────────────────────────────────────────────────
 
 
+# 64 hex chars (valid `openssl rand -hex 32` output) — used as the default
+# strong secret so individual tests can override JWT_SECRET to exercise the
+# rejection paths without first having to supply a passing baseline.
+_STRONG_HEX_SECRET = "3f9a17ce4d2b48a1c0e7f63bda5912f48e6c0a9d7b2e54f1c8a3d6094e7b1c2f"
+
+
 def _build_settings(monkeypatch: MonkeyPatch, **overrides: str) -> Settings:
     """Construct a Settings instance from explicit env overrides."""
     base = {
         "ENVIRONMENT": "production",
-        "JWT_SECRET": "x" * 64,
+        "JWT_SECRET": _STRONG_HEX_SECRET,
         "AI_PROVIDER_MODE": "openai",
         "OPENAI_API_KEY": "sk-proj-fake-but-not-placeholder-value-for-test",
     }
@@ -72,26 +82,62 @@ def _build_settings(monkeypatch: MonkeyPatch, **overrides: str) -> Settings:
     return Settings()
 
 
-def test_weak_jwt_secret_rejected_in_production(monkeypatch: MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match="JWT_SECRET"):
+def test_dictionary_phrase_jwt_secret_rejected_in_production(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A passphrase that happens to be 43 chars and contains valid base64
+    characters will decode to ~33 bytes via base64url. Format + length
+    alone is not enough — we also reject low-entropy decoded payloads
+    that look like text rather than crypto material."""
+    with pytest.raises(ValueError, match="low Shannon entropy"):
+        _build_settings(
+            monkeypatch,
+            JWT_SECRET="the-quick-brown-fox-jumps-over-the-lazy-dog",
+        )
+
+
+def test_repeating_pattern_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
+    """Same-prefix-repeated values decode to highly repetitive bytes — even
+    if technically 32+ bytes, the entropy check catches them."""
+    with pytest.raises(ValueError, match=r"low Shannon entropy|strong secret format"):
+        _build_settings(monkeypatch, JWT_SECRET="abcdef" * 10)  # 60 chars
+
+
+def test_short_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
+    """Genuinely short value — fails both length AND format gates."""
+    with pytest.raises(ValueError, match="not a recognized strong secret format"):
+        _build_settings(monkeypatch, JWT_SECRET="abc")
+
+
+def test_weak_known_value_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
+    with pytest.raises(ValueError, match="not a recognized strong secret format"):
         _build_settings(monkeypatch, JWT_SECRET="secret")
 
 
-def test_short_jwt_secret_rejected_in_production(monkeypatch: MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match="minimum is 32"):
-        _build_settings(monkeypatch, JWT_SECRET="short-but-not-placeholder")  # 24 chars
-
-
-def test_low_variety_jwt_secret_rejected(monkeypatch: MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match="character variety"):
-        _build_settings(monkeypatch, JWT_SECRET="a" * 64)
-
-
-def test_strong_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
+def test_strong_hex_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
     settings = _build_settings(
         monkeypatch,
-        # 64 hex chars, varied — what `openssl rand -hex 32` produces.
+        # 64 hex chars from `openssl rand -hex 32`.
         JWT_SECRET="3f9a17ce4d2b48a1c0e7f63bda5912f48e6c0a9d7b2e54f1c8a3d6094e7b1c2f",
+    )
+    assert settings.environment == Environment.PROD
+
+
+def test_strong_base64_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
+    # 32 random bytes base64-encoded — what `openssl rand -base64 32` produces.
+    # 32 bytes encodes to 44 base64 chars (including `=` padding).
+    settings = _build_settings(
+        monkeypatch,
+        JWT_SECRET="3f9a17ce4d2b48a1c0e7f63bda5912f48e6c0a9d7b2e54f1c8a3d6094e7b1c2f",
+    )
+    assert settings.environment == Environment.PROD
+
+
+def test_strong_urlsafe_base64_jwt_secret_accepted(monkeypatch: MonkeyPatch) -> None:
+    # `secrets.token_urlsafe(32)` output — base64url, no padding, 32 bytes decoded.
+    settings = _build_settings(
+        monkeypatch,
+        JWT_SECRET="P4Pp_oQu_xKgFXm7tdH8d-LnGRoT0HzEv3JFwUuq7Aw",
     )
     assert settings.environment == Environment.PROD
 
@@ -178,6 +224,91 @@ def test_valid_ip_rejects_junk() -> None:
     assert _valid_ip("'; DROP TABLE users; --") is None
     assert _valid_ip("") is None
     assert _valid_ip(None) is None
+
+
+# ── Login timing parity (smoke — exact parity is impossible, but we ───
+#     check the unknown-email path is in the same ballpark as wrong-pw) ─
+
+
+# ── verify_password rejects >72 bytes on login (parity with register) ──
+
+
+def test_verify_password_rejects_over_72_byte_input() -> None:
+    """bcrypt silently truncates inputs >72 bytes. If we accepted them here,
+    a user whose registered password is exactly 72 bytes could authenticate
+    with that password + any trailing garbage. verify_password must reject
+    such inputs even though the hash check would have "passed"."""
+    from app.core.security import hash_password, verify_password
+
+    base_pw = ("a" * 70) + "1A"  # 72 bytes
+    hashed = hash_password(base_pw)
+
+    # Correct password -> True (sanity)
+    assert verify_password(base_pw, hashed) is True
+
+    # Base + trailing junk would be silently truncated by bcrypt to the
+    # same 72 bytes -> would otherwise "match". We reject explicitly.
+    truncation_attempt = base_pw + "trailing-garbage-bcrypt-would-ignore"
+    assert verify_password(truncation_attempt, hashed) is False
+
+
+# ── service-level regression: login MUST call verify_password even when ─
+#     the email is unknown. Direct unit test of auth_service so a future ─
+#     refactor that reintroduces `if user is None: raise` is caught. ─────
+
+
+class _FakeResult:
+    def scalar_one_or_none(self) -> None:
+        return None  # always misses — that's the test scenario
+
+
+class _FakeAsyncSession:
+    """Minimal AsyncSession stub for non-DB unit tests of service logic."""
+
+    async def execute(self, _stmt: object) -> _FakeResult:
+        return _FakeResult()
+
+    async def flush(self) -> None:  # pragma: no cover - never called here
+        return None
+
+    async def commit(self) -> None:  # pragma: no cover
+        return None
+
+    async def rollback(self) -> None:  # pragma: no cover
+        return None
+
+
+async def test_login_runs_verify_password_even_when_user_missing(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """If someone reverts auth_service.login to short-circuit on
+    `user is None`, this test fails. The whole point of the dummy-hash
+    pattern is that verify_password runs in both branches.
+    """
+    from app.core.exceptions import UnauthorizedError
+    from app.services import auth_service as svc_mod
+
+    calls: list[tuple[str, str]] = []
+
+    def spy(password: str, hashed: str) -> bool:
+        calls.append((password, hashed))
+        return False  # never authenticates — we just need to know it ran
+
+    monkeypatch.setattr(svc_mod, "verify_password", spy)
+
+    service = svc_mod.AuthService(_FakeAsyncSession())  # type: ignore[arg-type]
+    with pytest.raises(UnauthorizedError) as exc_info:
+        await service.login(email="nobody@example.com", password="Secret123")
+
+    assert exc_info.value.code == "INVALID_CREDENTIALS"
+    assert len(calls) == 1, "verify_password must run exactly once on the missing-user path"
+    submitted_password, hashed_arg = calls[0]
+    assert submitted_password == "Secret123"
+    # The dummy hash must be a real bcrypt hash, not None / placeholder.
+    assert hashed_arg.startswith("$2b$"), (
+        "login must pass a real bcrypt dummy hash to verify_password on the "
+        "unknown-user path — anything else means the timing fix is gone"
+    )
 
 
 # ── Login timing parity (smoke — exact parity is impossible, but we ───

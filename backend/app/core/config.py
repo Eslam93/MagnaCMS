@@ -8,6 +8,11 @@ rather than silently running with insecure defaults.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import math
+import re
+from collections import Counter
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
@@ -41,32 +46,53 @@ CSVList = Annotated[list[str], BeforeValidator(_split_csv)]
 
 _PLACEHOLDER_PREFIXES = ("REPLACE_ME", "sk-proj-REPLACE", "dev-only-")
 
-# Minimum JWT secret length. `openssl rand -hex 32` produces a 64-char hex
-# string (32 bytes of entropy); that's the recommended floor. We enforce the
-# string length rather than try to detect encoding — anything under 32 chars
-# is below the floor regardless of encoding.
-_JWT_SECRET_MIN_LENGTH = 32
+# Minimum decoded JWT secret length in bytes — 32 bytes (256 bits) matches
+# `openssl rand -hex 32` and the HS256 key-size recommendation.
+_JWT_SECRET_MIN_BYTES = 32
 
-# Common weak values that pass length checks but would be trivially guessed.
-# Lowercased for case-insensitive matching.
-_JWT_SECRET_DENYLIST = frozenset(
-    {
-        "secret",
-        "password",
-        "password123",
-        "admin",
-        "test",
-        "changeme",
-        "default",
-        "12345678",
-        "00000000",
-        "ffffffff",
-    }
-)
+# Strict format gate. We accept ONLY:
+#   - hex strings of >=64 chars (decode to >=32 bytes)
+#   - base64 / base64url strings that decode to >=32 bytes AND whose
+#     decoded bytes have enough Shannon entropy to look like real
+#     random material (English text base64-decodes to low-entropy bytes
+#     and slipped past the previous "format + length" check)
+# Anything else — including 32+ char passphrases — is rejected.
+_HEX_RE = re.compile(r"\A[0-9a-fA-F]+\Z")
+_BASE64_RE = re.compile(r"\A[A-Za-z0-9+/=_-]+\Z")
+
+# Shannon-entropy floor for decoded JWT-secret bytes. Random bytes
+# approach the theoretical max of 8 bits/byte (in practice 7.5+ for 32
+# bytes). English-text bytes top out around 4-5. We pick 5.0 — comfortably
+# above natural language, comfortably below random material.
+_JWT_SECRET_MIN_ENTROPY_BITS = 5.0
+
+
+def _shannon_entropy_bits_per_byte(data: bytes) -> float:
+    if not data:
+        return 0.0
+    counts = Counter(data)
+    total = len(data)
+    return -sum((c / total) * math.log2(c / total) for c in counts.values())
 
 
 def _is_placeholder(value: str) -> bool:
     return value == "" or any(value.startswith(p) for p in _PLACEHOLDER_PREFIXES)
+
+
+def _decoded_bytes_if_base64(value: str) -> bytes | None:
+    """Return decoded bytes if `value` is valid standard- or url-safe base64.
+
+    Tries url-safe first (matches `secrets.token_urlsafe`), then standard.
+    Padding is fixed up to be lenient against `secrets.token_urlsafe` output
+    which omits trailing `=`.
+    """
+    padded = value + "=" * (-len(value) % 4)
+    for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+        try:
+            return decoder(padded)
+        except (ValueError, binascii.Error):
+            continue
+    return None
 
 
 def _is_weak_jwt_secret(value: str) -> str | None:
@@ -74,17 +100,33 @@ def _is_weak_jwt_secret(value: str) -> str | None:
     or None if it passes."""
     if _is_placeholder(value):
         return "value is a placeholder"
-    if len(value) < _JWT_SECRET_MIN_LENGTH:
-        return (
-            f"value is {len(value)} chars; minimum is {_JWT_SECRET_MIN_LENGTH} "
-            "(generate with `openssl rand -hex 32`)"
-        )
-    if value.lower() in _JWT_SECRET_DENYLIST:
-        return "value is a known weak secret"
-    # All-same-character secrets like "aaaaaaaa...".
-    if len(set(value)) <= 2:
-        return "value has insufficient character variety"
-    return None
+
+    # Hex path: 2 hex chars per byte, so 32 bytes = 64 chars minimum.
+    if _HEX_RE.fullmatch(value) and len(value) >= _JWT_SECRET_MIN_BYTES * 2:
+        return None
+
+    # Base64 / base64url path — also requires the decoded bytes to look
+    # like crypto material rather than English text that happens to be
+    # valid base64.
+    if _BASE64_RE.fullmatch(value):
+        decoded = _decoded_bytes_if_base64(value)
+        if decoded is not None and len(decoded) >= _JWT_SECRET_MIN_BYTES:
+            if _shannon_entropy_bits_per_byte(decoded) >= _JWT_SECRET_MIN_ENTROPY_BITS:
+                return None
+            return (
+                "value base64-decodes to enough bytes but the decoded payload "
+                "has low Shannon entropy — looks like text, not cryptographic "
+                "material. Use `openssl rand -base64 32` or `python -c 'import "
+                "secrets; print(secrets.token_urlsafe(32))'`."
+            )
+
+    return (
+        "value is not a recognized strong secret format. "
+        "Provide one of: (a) >=64 hex chars from `openssl rand -hex 32`, or "
+        "(b) base64/base64url string decoding to >=32 bytes from "
+        "`openssl rand -base64 32` / `python -c 'import secrets; "
+        "print(secrets.token_urlsafe(32))'`."
+    )
 
 
 class Settings(BaseSettings):
