@@ -1,0 +1,76 @@
+# MagnaCMS — local-dev orchestration.
+# `docker-compose up` brings up Postgres + Redis + stub backend + stub frontend.
+# Real backend/frontend builds arrive in P1.1 / P4.1 — at that point the `image:`
+# lines on `backend` and `frontend` get replaced with `build:` directives.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: magnacms-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: magnacms-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  # Placeholder until P1.1 ships the FastAPI Dockerfile.
+  backend:
+    image: nginx:alpine
+    container_name: magnacms-backend-stub
+    ports:
+      - "8000:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Placeholder until P4.1 ships the Next.js Dockerfile.
+  frontend:
+    image: nginx:alpine
+    container_name: magnacms-frontend-stub
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
