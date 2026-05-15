@@ -4,6 +4,28 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Slice 2: three more content types behind one registry
+
+Slice 1 shipped blog-post generation end-to-end. Slice 2 widens that to LinkedIn posts, marketing emails, and ad copy — same `POST /content/generate` route, same three-stage parse fallback, just three more prompts, three more Pydantic result models, three more renderers. The router's slice-1 content-type gate is gone; the form's three disabled tabs are now live.
+
+### Why a registry, not a `match` statement
+
+The naive widening adds an `if request.content_type == ...` block inside `ContentService.generate_blog_post` for each new type. After three of those it's already a mess, and Slice 6 (brand voices) will want to inject a prompt block into *every* type uniformly — switch statements at four call sites is a refactor waiting to happen. Instead, [`content_service.py`](backend/app/services/content_service.py) builds a `_REGISTRY: dict[ContentType, _ContentTypeBundle]` once at import. Each bundle pairs a prompt module's surface (`PROMPT_VERSION`, `build_prompt`, `JSON_SCHEMA`, `CORRECTIVE_RETRY_INSTRUCTION`) with its Pydantic `result_model` and its renderer. The public `generate(user, request)` looks up the bundle and runs the same fallback loop for every type. Adding a fifth content type is appending one registry entry plus a prompt/schema/renderer trio.
+
+### Schemas already covered this, by design
+
+[`backend/app/schemas/content.py`](backend/app/schemas/content.py)'s `GenerateRequest.content_type` was open to the full `ContentType` enum from day one — Slice 1's router was the only thing rejecting non-blog values. Slice 2 just removes that gate. The response side widens `GenerateResponse.result` from `BlogPostResult | None` to a `ContentResult` union over all four per-type models, and the router projects the stored JSONB back through the right model via a small `_RESULT_PROJECTORS` lookup. The frontend `api.d.ts` mirrors the same union — `openapi-typescript` doesn't model discriminated unions natively, so the consumer narrows on `content_type` if it needs to.
+
+### Renderers are still pure, write-time, and per-type
+
+[`render_linkedin_post`](backend/app/services/renderers/linkedin_post.py), [`render_email`](backend/app/services/renderers/email.py), and [`render_ad_copy`](backend/app/services/renderers/ad_copy.py) each map a typed result into the canonical text shape from §7.0.1 of the brief: hook/body/cta/hashtags for LinkedIn, subject/preview lines for email, and `## Short / ## Medium / ## Long` blocks for ad copy. The ad-copy renderer reorders variants into the canonical short → medium → long ladder regardless of input order, so providers that return them in a different sequence still produce identical `rendered_text`. The text feeds the same downstream paths as Slice 1: GIN full-text index, dashboard preview, copy-to-clipboard, exports.
+
+### What this slice does NOT include
+
+Streaming SSE on any of these (the brief explicitly allows non-streaming), client-side per-type result affordances (copy-hashtags-only, copy-just-the-headline, etc. — `react-markdown` over `rendered_text` covers all four for now), and the dashboard list that will make these new types feel real. Slice 4 picks up the dashboard next.
+
+---
+
 ## 2026-05-15 — Slice 1: first vertical that actually generates content
 
 The kickoff doc calls this milestone out as the *north star* — "a logged-in user generates a persisted blog post through the UI using the mock provider." Slice 1 is that, end-to-end: backend route, prompt module, three-stage parse fallback, renderer, persistence, typed API client extension, RHF form with content-type tabs, staged loading, markdown render, copy-to-clipboard, fallback-mode banner.
