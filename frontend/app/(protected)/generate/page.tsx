@@ -1,13 +1,11 @@
+import { GenerateForm } from "@/components/features/generate-form";
+
 /**
- * Stub for /generate. Real content-generation form lands in P4.5.
+ * /generate — Slice 1 ships blog-post generation against the mock or
+ * OpenAI providers (server-selected via AI_PROVIDER_MODE). The form
+ * widens to LinkedIn / email / ad-copy in Slice 2 without page-level
+ * changes; the tab strip is already there, just disabled.
  */
-export default function GenerateStub() {
-  return (
-    <div className="rounded-lg border bg-card p-8 text-center">
-      <h1 className="text-xl font-bold">Generate</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Content generation form lands in Phase 4 (P4.5).
-      </p>
-    </div>
-  );
+export default function GeneratePage() {
+  return <GenerateForm />;
 }

@@ -25,6 +25,9 @@ export interface paths {
   "/auth/me": {
     get: operations["me"];
   };
+  "/content/generate": {
+    post: operations["generateContent"];
+  };
   "/health": {
     get: operations["health"];
   };
@@ -64,6 +67,47 @@ export interface components {
       meta: {
         request_id: string | null;
       };
+    };
+
+    // ── Content (Slice 1: blog_post only) ────────────────────────
+    ContentType: "blog_post" | "linkedin_post" | "ad_copy" | "email";
+    ResultParseStatus: "ok" | "retried" | "failed";
+    BlogPostSection: {
+      heading: string;
+      body: string;
+    };
+    BlogPostResult: {
+      title: string;
+      meta_description: string;
+      intro: string;
+      sections: components["schemas"]["BlogPostSection"][];
+      conclusion: string;
+      suggested_tags: string[];
+    };
+    GenerateRequest: {
+      content_type: components["schemas"]["ContentType"];
+      topic: string;
+      tone?: string | null;
+      target_audience?: string | null;
+      brand_voice_id?: string | null;
+    };
+    GenerateUsage: {
+      model_id: string;
+      input_tokens: number;
+      output_tokens: number;
+      // Pydantic Decimal serializes as a string by default; the
+      // frontend never does math on it, just displays it.
+      cost_usd: string;
+    };
+    GenerateResponse: {
+      content_id: string;
+      content_type: components["schemas"]["ContentType"];
+      result: components["schemas"]["BlogPostResult"] | null;
+      rendered_text: string;
+      result_parse_status: components["schemas"]["ResultParseStatus"];
+      word_count: number;
+      usage: components["schemas"]["GenerateUsage"];
+      created_at: string;
     };
   };
 }
@@ -155,6 +199,35 @@ export interface operations {
             environment: string;
             dependencies: Record<string, string>;
           };
+        };
+      };
+    };
+  };
+  generateContent: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GenerateRequest"];
+      };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["GenerateResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      422: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      429: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
         };
       };
     };

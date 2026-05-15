@@ -4,6 +4,38 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Slice 1: first vertical that actually generates content
+
+The kickoff doc calls this milestone out as the *north star* — "a logged-in user generates a persisted blog post through the UI using the mock provider." Slice 1 is that, end-to-end: backend route, prompt module, three-stage parse fallback, renderer, persistence, typed API client extension, RHF form with content-type tabs, staged loading, markdown render, copy-to-clipboard, fallback-mode banner.
+
+### What "three-stage parse fallback" actually buys us
+
+The brief's §7.0 is non-negotiable: a user must never see an error mid-demo. In code that's [`content_service.py`](backend/app/services/content_service.py):
+
+1. **Attempt 1.** Call the LLM with OpenAI's `response_format: json_schema, strict: true`. Parse the JSON, validate against `BlogPostResult`. On success → `result_parse_status = OK`.
+2. **Attempt 2.** On any parse or validation failure, re-call *without* `json_schema` and with the previous raw output pasted back into the user prompt plus a corrective instruction. Asking the model under strict mode twice in a row tends to fail the same way — relaxing strict on the retry has been the empirically better path. On success → `result_parse_status = RETRIED`.
+3. **Attempt 3.** If the corrective retry also fails, persist the raw model output verbatim as `rendered_text`, set `result = null`, `result_parse_status = FAILED`. The frontend renders the raw text inside a `<pre>` and shows a small "Generated in fallback mode" banner. The demo continues.
+
+Token usage from both attempts is summed onto the persisted row so cost accounting stays honest even on retries. The mock provider always lands on attempt 1, so the canonical Slice 1 verification path costs nothing.
+
+### The schema is wider than the slice
+
+[`backend/app/schemas/content.py`](backend/app/schemas/content.py) defines `GenerateRequest.content_type` against the *full* `ContentType` enum, not just `BLOG_POST`. The router rejects non-blog values with 422 `UNSUPPORTED_CONTENT_TYPE` until Slice 2. Same on the frontend: [`generate-form.tsx`](frontend/components/features/generate-form.tsx) renders all four tabs from day one, with the three unsupported ones disabled and a "Coming in Slice 2" tooltip. Widening to LinkedIn / email / ad copy is a prompt-module + router-branch change, not a UI redesign.
+
+### Why per-type renderers run at write time
+
+`rendered_text` is the canonical text used by full-text search (the GIN index lives on it), the dashboard preview, copy-to-clipboard, and exports. Computing it at write time means readers never re-render — three reads of the same row produce three identical strings. [`render_blog_post`](backend/app/services/renderers/blog_post.py) is a pure function over the typed `BlogPostResult`; the test suite covers tag normalization, heading rendering, and word-count edge cases without spinning up Postgres.
+
+### Rate limit is the closest in-memory analog to the brief
+
+The brief asks for `20/hour` on `/content/generate`. The existing limiter is per-path-per-minute, so the route gets `20/minute` for now — same numeric budget, different window. The real `20/hour` sliding window is part of the Redis hardening pass (P11.3). I'd rather ship the wrong window than introduce Redis-on-the-critical-path two slices before the brief asks for it.
+
+### What this slice does NOT include
+
+LinkedIn / email / ad-copy content types, image generation, the dashboard list, the improver, brand voices, streaming SSE. Each lives in its own future slice per the kickoff document. Cutting them out kept this PR under the "end-to-end vertical in one session" budget.
+
+---
+
 ## 2026-05-15 — Phase 2 in 12 PRs while away from the keyboard
 
 Phase 2 — AWS infrastructure, frontend scaffolding, and Sentry — landed in twelve sequential PRs ([#120](https://github.com/Eslam93/MagnaCMS/pull/120) through [#130](https://github.com/Eslam93/MagnaCMS/pull/130) plus this docs PR) over a few hours while I was away. The constraint was deliberate: **code only, no `cdk deploy`**. Every PR's gate is `cdk synth --all` on the infra side or `pnpm build` on the frontend, never an actual cloud touch. That keeps the AWS bill at zero until I'm back to babysit the first deployment.
