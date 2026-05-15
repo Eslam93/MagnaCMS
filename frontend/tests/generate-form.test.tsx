@@ -49,6 +49,17 @@ vi.mock("@/lib/content/hooks", () => {
   };
 });
 
+// Brand-voice dropdown fetches at mount — stub the query so the test
+// doesn't fire a real fetch.
+vi.mock("@/lib/brand-voices/hooks", () => ({
+  useBrandVoicesQuery: () => ({
+    data: { data: [] },
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+}));
+
 // ImagePanel is rendered when generation succeeds — stub its hooks so
 // the test doesn't fire a real fetch against the (missing) backend.
 vi.mock("@/lib/content/image-hooks", () => ({

@@ -53,6 +53,7 @@ export function useGenerateMutation() {
         topic: input.topic.trim(),
         tone: input.tone?.trim() ? input.tone.trim() : undefined,
         target_audience: input.target_audience?.trim() ? input.target_audience.trim() : undefined,
+        brand_voice_id: input.brand_voice_id?.trim() ? input.brand_voice_id.trim() : undefined,
       };
       const { data, error, response } = await api.POST("/content/generate", {
         body,

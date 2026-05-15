@@ -4,6 +4,27 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Slice 6: brand voice mini — CRUD plus prompt injection
+
+Each generation now optionally pulls from a user-owned style preset. Slice 6 ships the smallest CRUD layer that earns the integration: `/brand-voices` list / create / detail / patch / delete, plus an optional `brand_voice_id` on every `POST /content/generate` that injects the voice's tone descriptors, banned phrases, audience hint, and sample copy into the user prompt. Persisted `user_prompt_snapshot` carries the full injected text so generations are reproducible against the exact prompt that produced them.
+
+### Why the injection lives in the service, not the prompt module
+
+Every per-type prompt module (`blog_post`, `linkedin_post`, `email`, `ad_copy`) accepts `brand_voice_block: str | None = None` already — that was a Slice 1 design decision so brand voices could land later without touching the four prompt modules. The new [`render_brand_voice_block`](backend/app/services/brand_voice_service.py) is a pure function that turns the persisted `BrandVoice` row into the block string. The content service looks up the voice (via the repository) and threads the block into `bundle.build_prompt(...)`. Two consequences:
+
+- Adding a fifth content type later doesn't need to know about brand voices — the registry entry plugs in and the service injects automatically.
+- Changing how the block renders (e.g., adding "Forbidden sentence structures") is a one-file change in the service, not a four-file change across prompt modules.
+
+### PATCH semantics: present-keys-only, not null-clearing
+
+`BrandVoiceUpdate` is all-optional. The router uses `body.model_fields_set` to extract only the keys the caller actually sent — `None` is treated as "unset", not "set to null". The shape matches what most clients actually want from a PATCH and avoids the "I accidentally sent `description: null` and lost my description" footgun. To clear a nullable string column, send an empty string; the schema lets that through.
+
+### What was cut
+
+Streaming for the generator with brand voice attached (still non-streaming, per brief allowance). A default-voice-per-user opinion (today the dropdown defaults to "No brand voice"). The "is this voice currently in use by N generations?" indicator on the delete button. All deferred — none of them block the demo.
+
+---
+
 ## 2026-05-15 — Slice 5: improver — analyze, then rewrite
 
 The brief asks for an explicit two-pass chain on `/improve` rather than the obvious one-shot "please improve this." Slice 5 implements exactly that: an analyze call returns a structured `{ issues, planned_changes }` list, then a rewrite call consumes those planned changes and returns the final improved text plus an explanation and a `changes_summary`. Both calls go through the same three-stage parse fallback as content generation, applied independently to each stage.

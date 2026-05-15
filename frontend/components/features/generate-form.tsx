@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import { useBrandVoicesQuery } from "@/lib/brand-voices/hooks";
 import { useGenerateMutation, type GenerateResponse } from "@/lib/content/hooks";
 import {
   CONTENT_TYPE_OPTIONS,
@@ -42,11 +43,13 @@ export function GenerateForm() {
       topic: "",
       tone: "",
       target_audience: "",
+      brand_voice_id: "",
     },
   });
 
   const selectedContentType = watch("content_type");
   const isPending = mutation.isPending;
+  const brandVoices = useBrandVoicesQuery();
 
   const onSubmit = (data: GenerateInput) => {
     mutation.mutate(data);
@@ -118,6 +121,24 @@ export function GenerateForm() {
               </p>
             ) : null}
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="brand_voice_id">Brand voice (optional)</Label>
+          <select
+            id="brand_voice_id"
+            disabled={isPending || brandVoices.isPending}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            data-testid="generate-brand-voice"
+            {...register("brand_voice_id")}
+          >
+            <option value="">No brand voice</option>
+            {brandVoices.data?.data.map((voice) => (
+              <option key={voice.id} value={voice.id}>
+                {voice.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         {mutation.isError ? (

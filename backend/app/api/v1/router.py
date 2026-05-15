@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.routers import auth, content, health, improve
+from app.api.v1.routers import auth, brand_voices, content, health, improve
 
 v1_router = APIRouter()
 v1_router.include_router(health.router)
 v1_router.include_router(auth.router)
 v1_router.include_router(content.router)
 v1_router.include_router(improve.router)
+v1_router.include_router(brand_voices.router)

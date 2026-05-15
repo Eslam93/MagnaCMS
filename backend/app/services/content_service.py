@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.db.enums import ContentType, ResultParseStatus
 from app.db.models import ContentPiece, User
@@ -43,6 +44,7 @@ from app.prompts import blog_post as blog_post_prompt
 from app.prompts import email as email_prompt
 from app.prompts import linkedin_post as linkedin_post_prompt
 from app.providers.llm.base import ILLMProvider, LLMResult
+from app.repositories.brand_voice_repository import BrandVoiceRepository
 from app.repositories.content_repository import ContentRepository
 from app.schemas.content import (
     AdCopyResult,
@@ -52,6 +54,7 @@ from app.schemas.content import (
     GenerateRequest,
     LinkedInPostResult,
 )
+from app.services.brand_voice_service import render_brand_voice_block
 from app.services.renderers import (
     render_ad_copy,
     render_blog_post,
@@ -171,10 +174,12 @@ class ContentService:
         """
         bundle = _REGISTRY[request.content_type]
 
+        brand_voice_block = await self._maybe_brand_voice_block(user, request.brand_voice_id)
         system_prompt, user_prompt = bundle.build_prompt(
             topic=request.topic,
             tone=request.tone,
             target_audience=request.target_audience,
+            brand_voice_block=brand_voice_block,
         )
 
         # --- Attempt 1: strict json_schema ---
@@ -261,6 +266,29 @@ class ContentService:
         return await self._repo.create(piece)
 
     # ── helpers ────────────────────────────────────────────────────────
+
+    async def _maybe_brand_voice_block(
+        self,
+        user: User,
+        brand_voice_id: Any,
+    ) -> str | None:
+        """Fetch the voice row and render it into a prompt block.
+
+        Returns None when the caller didn't supply a `brand_voice_id`.
+        Raises `NotFoundError` if they did but the row doesn't exist
+        or isn't owned — `BRAND_VOICE_NOT_FOUND` reads cleanly in the
+        toast.
+        """
+        if brand_voice_id is None:
+            return None
+        repo = BrandVoiceRepository(self._session)
+        voice = await repo.get_for_user(brand_voice_id, user.id)
+        if voice is None:
+            raise NotFoundError(
+                "Brand voice not found.",
+                code="BRAND_VOICE_NOT_FOUND",
+            )
+        return render_brand_voice_block(voice)
 
     @staticmethod
     def _try_parse(
