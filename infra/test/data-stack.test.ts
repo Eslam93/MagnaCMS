@@ -54,8 +54,10 @@ describe("DataStack (dev)", () => {
 
   it("provisions one S3 images bucket with public access blocked", () => {
     template.resourceCountIs("AWS::S3::Bucket", 1);
+    // BucketName is templated as `ai-content-images-dev-${AWS::AccountId}`
+    // — CDK renders this as a CloudFormation Fn::Join. Assert on the
+    // public-access configuration shape instead of the exact name.
     template.hasResourceProperties("AWS::S3::Bucket", {
-      BucketName: "ai-content-images-dev",
       PublicAccessBlockConfiguration: {
         BlockPublicAcls: true,
         BlockPublicPolicy: true,

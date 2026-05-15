@@ -27,10 +27,15 @@ This provisions the CDK toolkit stack (S3 bucket for assets, IAM roles) — requ
 `cdk deploy` of the ComputeStack will fail at App Runner creation if the ECR repo is empty — App Runner needs an image to start the service. Push a placeholder:
 
 ```bash
-# First, deploy just the data + compute stacks so the ECR repo exists
-npx cdk deploy magnacms-dev-network magnacms-dev-data magnacms-dev-compute -c env=dev
-# (Compute will fail at App Runner creation — that's OK; the ECR repo
-#  is created before App Runner attempts to pull. Continue.)
+# First, deploy the data + compute stacks with --no-rollback so the
+# ECR repo survives if App Runner fails to start. Without --no-rollback,
+# CloudFormation rolls back the whole stack on failure, deleting the
+# ECR repo before we have a chance to push to it.
+npx cdk deploy magnacms-dev-network magnacms-dev-data magnacms-dev-compute \
+  --no-rollback -c env=dev
+# Compute will fail at App Runner creation — that's expected. The ECR
+# repo is left in CREATE_COMPLETE state because --no-rollback preserves
+# successfully-created resources.
 
 # Build + push the real backend image
 ECR_URI=$(aws cloudformation describe-stacks \
@@ -42,7 +47,8 @@ aws ecr get-login-password --region us-east-1 \
 docker build -t "$ECR_URI:latest" ../backend/
 docker push "$ECR_URI:latest"
 
-# Now retry the deploy — App Runner should succeed this time
+# Now retry the deploy — App Runner should succeed this time.
+# Drop --no-rollback now; subsequent deploys want normal rollback behavior.
 npx cdk deploy magnacms-dev-compute -c env=dev
 ```
 
@@ -109,15 +115,40 @@ curl -fsSL "https://$APPRUNNER_URL/api/v1/health"
 
 Expected: `{"status":"ok","version":"0.1.0","environment":"dev","dependencies":{...}}`.
 
-### 7. Update CORS_ORIGINS and IMAGES_CDN_BASE_URL
+### 7. Update post-deploy env vars (App Runner + Amplify)
 
-The compute stack ships with placeholder values for these. After EdgeStack deploys, you'll know the Amplify domain. Update via console:
+The compute stack ships with placeholder values that need real URLs once EdgeStack is up. Two consoles to visit.
 
-1. App Runner → `magnacms-dev-backend` → Configuration → Environment variables
-2. Update `CORS_ORIGINS` to include `https://<branch>.<amplify-app-id>.amplifyapp.com`
-3. Leave `IMAGES_CDN_BASE_URL` empty until CloudFront-for-images lands in Phase 5
+**App Runner** → `magnacms-dev-backend` → Configuration → Environment variables:
+
+1. Update `CORS_ORIGINS` to include `https://<branch>.<amplify-app-id>.amplifyapp.com`
+2. Leave `IMAGES_CDN_BASE_URL` empty until CloudFront-for-images lands in Phase 5
 
 App Runner force-redeploys on env-var change.
+
+**Amplify** → `magnacms-dev` → App settings → Environment variables:
+
+1. Add `NEXT_PUBLIC_API_BASE_URL` = `https://<apprunner-url>/api/v1`
+2. (Optional) `NEXT_PUBLIC_SENTRY_DSN` once you provision a Sentry project
+
+Without `NEXT_PUBLIC_API_BASE_URL`, the built frontend defaults to `http://localhost:8000/api/v1` and every request fails in production. Trigger a fresh Amplify build after the env update so the new value is baked into the bundle.
+
+### 7a. Set CloudWatch log retention manually
+
+ObservabilityStack pre-creates two log groups, but App Runner ignores them and creates its own under `/aws/apprunner/<service-name>/<service-id>/...` where the service-id is randomly assigned. After App Runner is RUNNING, find the real log groups and set retention:
+
+```bash
+SERVICE_ID=$(aws apprunner describe-service \
+  --service-arn "$APPRUNNER_ARN" \
+  --query 'Service.ServiceId' --output text)
+for stream in service application; do
+  aws logs put-retention-policy \
+    --log-group-name "/aws/apprunner/magnacms-dev-backend/$SERVICE_ID/$stream" \
+    --retention-in-days 14
+done
+```
+
+The pre-created groups can be deleted (`aws logs delete-log-group ...`) — they're never used.
 
 ### 8. **PREFLIGHT: Verify rate-limit IP identity** (P1.10 follow-up — critical)
 

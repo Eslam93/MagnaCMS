@@ -45,7 +45,7 @@ exports[`NetworkStack (dev) matches snapshot 1`] = `
   "Resources": {
     "SgRds7233AF52": {
       "Properties": {
-        "GroupDescription": "RDS Postgres: App Runner + dev IP allowlist only",
+        "GroupDescription": "RDS Postgres: open SG, security via Postgres auth + SSL",
         "SecurityGroupEgress": [
           {
             "CidrIp": "255.255.255.255/32",
@@ -55,31 +55,24 @@ exports[`NetworkStack (dev) matches snapshot 1`] = `
             "ToPort": 86,
           },
         ],
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "PostgreSQL — auth + SSL is the gate (no App Runner prefix list available)",
+            "FromPort": 5432,
+            "IpProtocol": "tcp",
+            "ToPort": 5432,
+          },
+        ],
         "VpcId": {
           "Ref": "Vpc8378EB38",
         },
       },
       "Type": "AWS::EC2::SecurityGroup",
-    },
-    "SgRdsfrompl0fb53b9774434e7e15432CC6A2961": {
-      "Properties": {
-        "Description": "PostgreSQL from App Runner egress",
-        "FromPort": 5432,
-        "GroupId": {
-          "Fn::GetAtt": [
-            "SgRds7233AF52",
-            "GroupId",
-          ],
-        },
-        "IpProtocol": "tcp",
-        "SourcePrefixListId": "pl-0fb53b9774434e7e1",
-        "ToPort": 5432,
-      },
-      "Type": "AWS::EC2::SecurityGroupIngress",
     },
     "SgRedis85D0B09A": {
       "Properties": {
-        "GroupDescription": "ElastiCache Redis: App Runner only",
+        "GroupDescription": "ElastiCache Redis: VPC-internal only (USE_REDIS=false until VPC connector lands)",
         "SecurityGroupEgress": [
           {
             "CidrIp": "255.255.255.255/32",
@@ -94,22 +87,6 @@ exports[`NetworkStack (dev) matches snapshot 1`] = `
         },
       },
       "Type": "AWS::EC2::SecurityGroup",
-    },
-    "SgRedisfrompl0fb53b9774434e7e16379C4070660": {
-      "Properties": {
-        "Description": "Redis from App Runner egress",
-        "FromPort": 6379,
-        "GroupId": {
-          "Fn::GetAtt": [
-            "SgRedis85D0B09A",
-            "GroupId",
-          ],
-        },
-        "IpProtocol": "tcp",
-        "SourcePrefixListId": "pl-0fb53b9774434e7e1",
-        "ToPort": 6379,
-      },
-      "Type": "AWS::EC2::SecurityGroupIngress",
     },
     "Vpc8378EB38": {
       "Properties": {

@@ -22,10 +22,11 @@ REFRESH_COOKIE_PATH = "/api/v1/auth"
 def _set_refresh_cookie(response: Response, tokens: AuthTokens) -> None:
     """Set the httpOnly refresh cookie.
 
-    `Secure` is set for every environment except `local` — matching the same
-    "only local is permissive" rule the config validator applies to JWT
-    secrets. A shared cloud `dev` environment should get TLS-only cookies
-    too, otherwise the cookie can be observed in transit.
+    `Secure` is set for every environment except `local`. `SameSite` is
+    read from settings — `lax` for same-site setups (local, custom
+    domains), `none` for cross-site setups like default
+    `*.amplifyapp.com` + `*.awsapprunner.com`. Browsers require
+    `Secure` whenever `SameSite=None`, which holds outside local.
     """
     settings = get_settings()
     secure = settings.environment != Environment.LOCAL
@@ -34,7 +35,7 @@ def _set_refresh_cookie(response: Response, tokens: AuthTokens) -> None:
         tokens.refresh_token_raw,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=settings.jwt_refresh_token_ttl_seconds,
         path=REFRESH_COOKIE_PATH,
     )
@@ -50,7 +51,7 @@ def _clear_refresh_cookie(response: Response) -> None:
         REFRESH_COOKIE_NAME,
         path=REFRESH_COOKIE_PATH,
         secure=secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         httponly=True,
     )
 

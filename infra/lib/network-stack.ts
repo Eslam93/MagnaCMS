@@ -1,67 +1,35 @@
 /**
  * NetworkStack — VPC, subnets, security groups.
  *
- * Design choices (per brief §11):
+ * Design choices (per brief §11 — revised after P2.11 review):
  *
  *   - 2 AZs, PUBLIC subnets only. No private subnets, no NAT gateways.
  *     App Runner sits outside the VPC entirely (no VPC connector) so
  *     it can reach OpenAI/S3/Secrets Manager over public egress
- *     without VPC endpoint sprawl. RDS sits in the public subnet but
- *     is locked down by SG to App Runner's egress IP prefix list
- *     plus an optional dev-IP allowlist.
+ *     without VPC endpoint sprawl.
  *
- *   - SG for RDS: inbound 5432 from App Runner egress prefix list
- *     (com.amazonaws.us-east-1.apprunner) + cfg.devIpAllowlist.
- *     The prefix list is a managed AWS resource — its IPs change as
- *     App Runner scales, but the list ID is stable.
+ *   - RDS SG: inbound 5432 from 0.0.0.0/0. The original plan was to
+ *     allowlist App Runner's egress prefix list, but AWS doesn't
+ *     publish a stable per-service egress prefix list for the
+ *     no-VPC-connector mode — the IDs I hardcoded were unverified.
+ *     With no SG-level restriction available, security falls on:
+ *       1. Auto-generated strong RDS password (in Secrets Manager)
+ *       2. SSL-required Postgres connection (parameter group enforces it)
+ *       3. Custom JWT auth at the app layer
+ *     For dev this is acceptable; prod will narrow when we adopt a
+ *     VPC connector (P11.x) or move to RDS Proxy / Aurora Data API.
  *
- *   - SG for ElastiCache: inbound 6379 from the same prefix list.
- *     Dev IP allowlist not extended here because Redis isn't
- *     externally browseable.
- *
- * Public-RDS-in-public-subnet is a deliberate trade-off. The brief
- * explains the rationale at length: keeping the network surface flat
- * removes a whole class of "I can't reach my DB" debugging that VPC
- * connectors + NAT + endpoint services would introduce. The SGs do
- * the actual access control.
+ *   - Redis SG: unchanged surface (no public ingress). ElastiCache is
+ *     reachable only from within the VPC, and App Runner without a
+ *     VPC connector can't reach it. The backend runs with USE_REDIS=false
+ *     in this phase; Redis lights up alongside the VPC-connector work.
  */
 
 import { CfnOutput, Stack, type StackProps } from "aws-cdk-lib";
-import {
-  Peer,
-  Port,
-  SecurityGroup,
-  SubnetType,
-  Vpc,
-} from "aws-cdk-lib/aws-ec2";
+import { Peer, Port, SecurityGroup, SubnetType, Vpc } from "aws-cdk-lib/aws-ec2";
 import type { Construct } from "constructs";
 
 import type { EnvConfig } from "./config";
-
-/**
- * App Runner's managed egress prefix list ID per region. AWS does not
- * publish a CDK helper for this; the ID is stable per region. Update
- * if AWS ever changes it (announced in their changelog).
- *
- * Source: https://docs.aws.amazon.com/apprunner/latest/dg/security-vpc.html
- */
-const APPRUNNER_EGRESS_PREFIX_LIST_IDS: Record<string, string> = {
-  "us-east-1": "pl-0fb53b9774434e7e1",
-  "us-east-2": "pl-0c1f0fbbbcdcc4c43",
-  "us-west-2": "pl-0a8a8a8a8a8a8a8a8",
-  "eu-west-1": "pl-09beda8c47f6dd2c8",
-};
-
-function appRunnerPrefixListId(region: string): string {
-  const id = APPRUNNER_EGRESS_PREFIX_LIST_IDS[region];
-  if (!id) {
-    throw new Error(
-      `App Runner egress prefix list ID not catalogued for region ${region}. ` +
-        `Add it to APPRUNNER_EGRESS_PREFIX_LIST_IDS in network-stack.ts.`,
-    );
-  }
-  return id;
-}
 
 export interface NetworkStackProps extends StackProps {
   cfg: EnvConfig;
@@ -76,6 +44,7 @@ export class NetworkStack extends Stack {
     super(scope, id, props);
 
     const { cfg } = props;
+    void cfg; // currently only used for stack-level tagging via the App
 
     this.vpc = new Vpc(this, "Vpc", {
       maxAzs: 2,
@@ -91,38 +60,34 @@ export class NetworkStack extends Stack {
       // No private subnets; App Runner doesn't sit in the VPC.
     });
 
-    const prefixListId = appRunnerPrefixListId(cfg.region);
-
     // --- RDS SG ---
+    // Open to 0.0.0.0/0 on 5432. App Runner public egress doesn't have
+    // a stable prefix list to allowlist; security relies on Postgres
+    // auth + SSL + auto-rotated credentials in Secrets Manager.
+    // RFC1918 narrowing here would break App Runner since its egress
+    // IPs are AWS-managed public ranges.
     this.sgRds = new SecurityGroup(this, "SgRds", {
       vpc: this.vpc,
-      description: "RDS Postgres: App Runner + dev IP allowlist only",
+      description: "RDS Postgres: open SG, security via Postgres auth + SSL",
       allowAllOutbound: false,
     });
     this.sgRds.addIngressRule(
-      Peer.prefixList(prefixListId),
+      Peer.anyIpv4(),
       Port.tcp(5432),
-      "PostgreSQL from App Runner egress",
+      "PostgreSQL — auth + SSL is the gate (no App Runner prefix list available)",
     );
-    for (const cidr of cfg.devIpAllowlist) {
-      this.sgRds.addIngressRule(
-        Peer.ipv4(cidr),
-        Port.tcp(5432),
-        `Dev access from ${cidr}`,
-      );
-    }
 
     // --- ElastiCache (Redis) SG ---
+    // Closed SG. Redis stays VPC-internal; App Runner can't reach it
+    // without a VPC connector. The backend runs with USE_REDIS=false
+    // until that wiring lands (P11.x). When it does, this rule
+    // becomes Peer.securityGroupId(<app-runner-vpc-connector-sg>).
     this.sgRedis = new SecurityGroup(this, "SgRedis", {
       vpc: this.vpc,
-      description: "ElastiCache Redis: App Runner only",
+      description:
+        "ElastiCache Redis: VPC-internal only (USE_REDIS=false until VPC connector lands)",
       allowAllOutbound: false,
     });
-    this.sgRedis.addIngressRule(
-      Peer.prefixList(prefixListId),
-      Port.tcp(6379),
-      "Redis from App Runner egress",
-    );
 
     new CfnOutput(this, "VpcId", {
       value: this.vpc.vpcId,
