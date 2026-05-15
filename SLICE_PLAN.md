@@ -2,7 +2,7 @@
 
 > **This file is the operating manual for the current Claude Code session and any successor sessions (compaction, dispatcher pattern, fresh context).** Read this top-to-bottom before editing code. When state changes (a slice merges, a deploy fact shifts, a known issue is resolved), update this file in the same commit.
 
-**Last updated:** 2026-05-15 (after Slice 2 merge — text gen widened to all four content types).
+**Last updated:** 2026-05-15 (after Slice 4 merge — dashboard with list/detail/soft delete + undo).
 
 ---
 
@@ -13,9 +13,10 @@
 | Slice 0 — Deploy fix gate (P2.11 + P2.12 + P2.13) | ✅ shipped, merged into main |
 | Slice 1 — Text gen, blog only, mock + OpenAI | ✅ shipped in [#135](https://github.com/Eslam93/MagnaCMS/pull/135), merged into main |
 | Slice 2 — Text gen widened (LinkedIn + email + ad copy) | ✅ shipped in [#137](https://github.com/Eslam93/MagnaCMS/pull/137), merged into main |
+| Slice 4 — Dashboard (list + detail + soft delete) | ✅ shipped in [#138](https://github.com/Eslam93/MagnaCMS/pull/138), merged into main |
 | Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded** |
 | Deploy-time fixes (em-dash, NoDecode, migration env, Fargate SG) | em-dash + NoDecode: code in repo. Migration env + SG: documented in §4 as deploy-time TODOs (band-aided live, CDK code unchanged). |
-| Remaining slices | 4, 3, 5, 6 (in that order — see §3 for rationale) |
+| Remaining slices | 3, 5, 6 (in that order — see §3 for rationale) |
 | Time budget | **12 hours of local-first feature work, then 1-2h batch deploy + polish at the end of 24h.** |
 
 ### Live deploy snapshot (preserve — do NOT redeploy in this 12h window)
@@ -71,25 +72,7 @@ Order: **2 → 4 → 3 → 5 → 6**. Rationale: Slice 4 (dashboard) before Slic
 
 ### Slice 4 — Dashboard (list + detail + soft delete)
 
-**Branch:** `slice-4/dashboard`. **Budget:** ~2h. **Order: BEFORE Slice 3.**
-
-Done when:
-- [ ] Backend endpoints:
-  - `GET /api/v1/content` — paginated list, scoped to current user, supports `?content_type=...&q=...&page=&page_size=`. `q` uses the GIN full-text index on `rendered_text` (already in baseline migration). Response envelope: `{ data: [...], meta: { request_id, pagination: { page, page_size, total, total_pages } } }`.
-  - `GET /api/v1/content/:id` — detail incl. (eventually) current image; for Slice 4 just the content row.
-  - `DELETE /api/v1/content/:id` — soft delete, returns the soft-deleted record (frontend uses for "undo" toast).
-  - `POST /api/v1/content/:id/restore` — undelete within 24h (compare `deleted_at` against `now() - 24h`).
-- [ ] `ContentRepository`: add `list_for_user(user_id, *, content_type=None, q=None, page, page_size)`, `soft_delete(content_id, user_id)`, `restore(content_id, user_id)`.
-- [ ] Frontend `app/(protected)/dashboard/page.tsx`: replace the `/me` stub with the real dashboard. Components in `components/features/`:
-  - `content-list.tsx` — TanStack Query, pagination controls, filter by content type, search input
-  - `content-card.tsx` — preview from `rendered_text` (first 200 chars), word count, model id, created_at, content-type badge, delete button
-  - `content-detail-dialog.tsx` — opens on card click, shows full `rendered_text` markdown, copy button
-  - `delete-undo-toast.tsx` — fires after delete with a "Undo" action calling the restore endpoint
-- [ ] Tests:
-  - Backend: integration tests for each endpoint (list, detail, delete, restore). Verify pagination + content-type filter + FTS search. ~6 tests.
-  - Frontend: 1 vitest covering the dashboard happy path (list renders, click → detail dialog, delete → undo toast → restore).
-- [ ] DEVLOG entry; README §6 update.
-- [ ] PR title: `[Slice 4] Dashboard: list, detail, soft delete with undo`
+✅ **Shipped in [#138](https://github.com/Eslam93/MagnaCMS/pull/138).** `ContentRepository` got `list_for_user` (pagination + filter + `plainto_tsquery` against the GIN index on `rendered_text`), `soft_delete`, `restore` (24-hour window). New endpoints: `GET /content` (paginated envelope), `GET /content/:id`, `DELETE /content/:id` (soft delete), `POST /content/:id/restore`. Frontend replaced the welcome stub with `ContentList` + `ContentCard` + `ContentDetailDialog` + sonner Undo toast; added `components/ui/modal.tsx` (no Radix dialog dep). Tests: 204 backend pass + 13 integration skip locally for the new dashboard, 14 frontend pass (+4), 36 infra jest pass, all stacks synth.
 
 ### Slice 3 — Image generation
 
