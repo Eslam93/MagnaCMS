@@ -22,26 +22,43 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/us-east-1
 
 This provisions the CDK toolkit stack (S3 bucket for assets, IAM roles) — required once per AWS account + region combination.
 
-### 2. Push a placeholder backend image to ECR
+### 2. Deploy Network + Data stacks
 
-`cdk deploy` of the ComputeStack will fail at App Runner creation if the ECR repo is empty — App Runner needs an image to start the service. Push a placeholder:
+Data must exist before the OpenAI secret can be populated, and the OpenAI secret must hold a real key before App Runner boots — the backend's config validator rejects the placeholder value in non-`local` environments. So Compute is split out into step 4.
 
 ```bash
-# First, deploy the data + compute stacks with --no-rollback so the
-# ECR repo survives if App Runner fails to start. Without --no-rollback,
-# CloudFormation rolls back the whole stack on failure, deleting the
-# ECR repo before we have a chance to push to it.
-npx cdk deploy magnacms-dev-network magnacms-dev-data magnacms-dev-compute \
-  --no-rollback -c env=dev
-# Compute will fail at App Runner creation — that's expected. The ECR
-# repo is left in CREATE_COMPLETE state because --no-rollback preserves
-# successfully-created resources.
+npx cdk deploy magnacms-dev-network magnacms-dev-data -c env=dev
+```
 
-# Build + push the real backend image
-ECR_URI=$(aws cloudformation describe-stacks \
-  --stack-name magnacms-dev-compute \
-  --query "Stacks[0].Outputs[?ExportName=='magnacms-dev-compute-ecr-uri'].OutputValue" \
-  --output text)
+### 3. Populate the OpenAI API key
+
+DataStack creates `magnacms-dev-openai-api-key` with an explicit placeholder string (`sk-proj-REPLACE_ME-...`). Populate it before Compute deploys so App Runner can pass the secret-strength validator on first boot:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id magnacms-dev-openai-api-key \
+  --secret-string '<your-sk-proj-key>'
+```
+
+### 4. Push a placeholder backend image to ECR, then deploy Compute
+
+`cdk deploy` of the ComputeStack will fail at App Runner creation if the ECR repo is empty — App Runner needs an image to start the service. The bootstrap dance:
+
+```bash
+# Deploy Compute with --no-rollback so the ECR repo survives App
+# Runner's expected first-boot failure. Without --no-rollback,
+# CloudFormation rolls the whole stack back, deleting the ECR repo
+# before we get a chance to push to it.
+npx cdk deploy magnacms-dev-compute --no-rollback -c env=dev
+# Compute will fail at App Runner creation — that's expected. The ECR
+# repo survives in CREATE_COMPLETE state.
+
+# Build + push the real backend image. ECR repo name is deterministic
+# (`magnacms-dev-backend`) so look it up directly instead of digging
+# CloudFormation outputs out of a failed-state stack.
+ECR_URI=$(aws ecr describe-repositories \
+  --repository-names magnacms-dev-backend \
+  --query 'repositories[0].repositoryUri' --output text)
 aws ecr get-login-password --region us-east-1 \
   | docker login --username AWS --password-stdin "$ECR_URI"
 docker build -t "$ECR_URI:latest" ../backend/
@@ -52,23 +69,13 @@ docker push "$ECR_URI:latest"
 npx cdk deploy magnacms-dev-compute -c env=dev
 ```
 
-### 3. Deploy remaining stacks
+### 5. Deploy remaining stacks
 
 ```bash
 npx cdk deploy magnacms-dev-edge magnacms-dev-observability -c env=dev
 ```
 
-### 4. Populate the OpenAI API key
-
-DataStack creates `magnacms-dev-openai-api-key` as an empty secret. Populate it via the console or CLI:
-
-```bash
-aws secretsmanager put-secret-value \
-  --secret-id magnacms-dev-openai-api-key \
-  --secret-string '<your-sk-proj-key>'
-```
-
-App Runner picks up the value on next deploy. If App Runner is already RUNNING, force a redeploy:
+If you ever need to rotate the OpenAI key after Compute is RUNNING, App Runner picks up the new value on next deploy. Force a redeploy with:
 
 ```bash
 APPRUNNER_ARN=$(aws cloudformation describe-stacks \
@@ -78,7 +85,7 @@ APPRUNNER_ARN=$(aws cloudformation describe-stacks \
 aws apprunner start-deployment --service-arn "$APPRUNNER_ARN"
 ```
 
-### 5. Run initial migrations
+### 6. Run initial migrations
 
 ```bash
 MIGRATION_CLUSTER=$(aws cloudformation describe-stacks \
@@ -103,7 +110,7 @@ aws ecs run-task \
 
 Watch for the task to reach STOPPED with exit code 0 in the ECS console. Logs are in the `/aws/ecs/...` log group.
 
-### 6. Smoke test `/health`
+### 7. Smoke test `/health`
 
 ```bash
 APPRUNNER_URL=$(aws cloudformation describe-stacks \
@@ -115,7 +122,7 @@ curl -fsSL "https://$APPRUNNER_URL/api/v1/health"
 
 Expected: `{"status":"ok","version":"0.1.0","environment":"dev","dependencies":{...}}`.
 
-### 7. Update post-deploy env vars (App Runner + Amplify)
+### 8. Update post-deploy env vars (App Runner + Amplify)
 
 The compute stack ships with placeholder values that need real URLs once EdgeStack is up. Two consoles to visit.
 
@@ -133,7 +140,7 @@ App Runner force-redeploys on env-var change.
 
 Without `NEXT_PUBLIC_API_BASE_URL`, the built frontend defaults to `http://localhost:8000/api/v1` and every request fails in production. Trigger a fresh Amplify build after the env update so the new value is baked into the bundle.
 
-### 7a. Set CloudWatch log retention manually
+### 8a. Set CloudWatch log retention manually
 
 ObservabilityStack pre-creates two log groups, but App Runner ignores them and creates its own under `/aws/apprunner/<service-name>/<service-id>/...` where the service-id is randomly assigned. After App Runner is RUNNING, find the real log groups and set retention:
 
@@ -150,7 +157,7 @@ done
 
 The pre-created groups can be deleted (`aws logs delete-log-group ...`) — they're never used.
 
-### 8. **PREFLIGHT: Verify rate-limit IP identity** (P1.10 follow-up — critical)
+### 9. **PREFLIGHT: Verify rate-limit IP identity** (P1.10 follow-up — critical)
 
 The rate limiter in `app/middleware/rate_limit.py` keys on `scope["client"]`. Verify that App Runner forwards the real client IP rather than its internal load-balancer peer:
 
@@ -173,7 +180,7 @@ Expected: ten 401s (invalid credentials), then a 429 (rate-limited) on attempt 1
 
 (See P1.10 plan notes for the follow-up code change.)
 
-### 9. Connect Amplify to GitHub
+### 10. Connect Amplify to GitHub
 
 CDK creates the Amplify app shell but can't auto-connect to a GitHub repo without an OAuth token. From the Amplify console:
 
@@ -183,7 +190,7 @@ CDK creates the Amplify app shell but can't auto-connect to a GitHub repo withou
 
 First Amplify build runs against the current `main` HEAD.
 
-### 10. Record the live URLs in README
+### 11. Record the live URLs in README
 
 In the project root `README.md` §1 "Live demo":
 
@@ -192,7 +199,7 @@ In the project root `README.md` §1 "Live demo":
 - **Frontend**: https://<amplify-branch>.<amplify-app-id>.amplifyapp.com
 ```
 
-### 11. Flip `deploy.yml` to auto-trigger
+### 12. Flip `deploy.yml` to auto-trigger
 
 Once the manual deploy succeeds end-to-end (above), update `.github/workflows/deploy.yml`:
 
@@ -236,7 +243,7 @@ npx cdk destroy --all -c env=dev
 
 ## Known issues
 
-- **App Runner first deploy without a pushed image fails.** That's expected (see step 2). Push the image, then retry.
+- **App Runner first deploy without a pushed image fails.** That's expected (see step 4). Push the image, then retry.
 - **`amplify.yml` not yet present.** Lands in P2.9a (frontend scaffold). Until then, the inline buildSpec in EdgeStack serves as the build config.
 - **CloudFront for images is deferred to Phase 5.** EdgeStack ships Amplify only because of a circular dependency between DataStack and CloudFront-for-S3 OAC. See PR #124 for the full reasoning.
 - **The `prod` environment isn't wired.** `loadConfig('prod')` throws at startup. Adding prod is a single-PR follow-up — copy the dev entry in `lib/config.ts`, tighten instance sizes/retention/devIpAllowlist, switch removalPolicy to RETAIN, set `multi-AZ: true` on RDS.

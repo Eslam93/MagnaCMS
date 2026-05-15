@@ -279,6 +279,12 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 "Name": "AWS_REGION",
                 "Value": "us-east-1",
               },
+              {
+                "Name": "RDS_SECRET_ARN",
+                "Value": {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+                },
+              },
             ],
             "Essential": true,
             "Image": {
@@ -341,14 +347,6 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
               },
             },
             "Name": "migrate",
-            "Secrets": [
-              {
-                "Name": "RDS_SECRET_ARN",
-                "ValueFrom": {
-                  "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
-                },
-              },
-            ],
           },
         ],
         "Cpu": "256",
@@ -426,16 +424,6 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 ],
               },
             },
-            {
-              "Action": [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-              ],
-              "Effect": "Allow",
-              "Resource": {
-                "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
-              },
-            },
           ],
           "Version": "2012-10-17",
         },
@@ -464,6 +452,32 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
         },
       },
       "Type": "AWS::IAM::Role",
+    },
+    "MigrationTaskTaskRoleDefaultPolicy0155D82C": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "MigrationTaskTaskRoleDefaultPolicy0155D82C",
+        "Roles": [
+          {
+            "Ref": "MigrationTaskTaskRole9CC4695E",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
     },
     "MigrationTaskmigrateLogGroup121BE525": {
       "DeletionPolicy": "Retain",
@@ -525,12 +539,6 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                     "Fn::ImportValue": "test-data:ExportsOutputRefOpenaiApiKeySecret330F502FA86B3F79",
                   },
                 },
-                {
-                  "Name": "RDS_SECRET_ARN",
-                  "Value": {
-                    "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
-                  },
-                },
               ],
               "RuntimeEnvironmentVariables": [
                 {
@@ -570,6 +578,12 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 {
                   "Name": "IMAGES_CDN_BASE_URL",
                   "Value": "",
+                },
+                {
+                  "Name": "RDS_SECRET_ARN",
+                  "Value": {
+                    "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
+                  },
                 },
               ],
             },

@@ -53,6 +53,7 @@ import {
   Credentials,
   DatabaseInstance,
   DatabaseInstanceEngine,
+  ParameterGroup,
   PostgresEngineVersion,
 } from "aws-cdk-lib/aws-rds";
 import { BlockPublicAccess, Bucket, BucketEncryption } from "aws-cdk-lib/aws-s3";
@@ -81,10 +82,26 @@ export class DataStack extends Stack {
     const { cfg, vpc, sgRds, sgRedis } = props;
 
     // --- RDS Postgres ---
+    // Parameter group forcing TLS on every connection. The RDS SG is
+    // open to 0.0.0.0/0 (NetworkStack) because App Runner has no stable
+    // egress prefix list to allowlist; `rds.force_ssl=1` is what makes
+    // "auth + SSL is the gate" actually true server-side. The backend
+    // also passes `?ssl=require` in the assembled DSN
+    // (`app/core/aws_secrets.py`) — belt + suspenders.
+    const pgEngine = DatabaseInstanceEngine.postgres({
+      version: PostgresEngineVersion.VER_16_3,
+    });
+    const pgParams = new ParameterGroup(this, "PgParams", {
+      engine: pgEngine,
+      description: "Postgres parameter group — forces TLS on all connections",
+      parameters: {
+        "rds.force_ssl": "1",
+      },
+    });
+
     this.rdsInstance = new DatabaseInstance(this, "Postgres", {
-      engine: DatabaseInstanceEngine.postgres({
-        version: PostgresEngineVersion.VER_16_3,
-      }),
+      engine: pgEngine,
+      parameterGroup: pgParams,
       instanceType: InstanceType.of(InstanceClass.T4G, InstanceSize.MICRO),
       vpc,
       vpcSubnets: { subnetType: SubnetType.PUBLIC },

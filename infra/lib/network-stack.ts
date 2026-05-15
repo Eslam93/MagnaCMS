@@ -13,9 +13,14 @@
  *     publish a stable per-service egress prefix list for the
  *     no-VPC-connector mode — the IDs I hardcoded were unverified.
  *     With no SG-level restriction available, security falls on:
- *       1. Auto-generated strong RDS password (in Secrets Manager)
- *       2. SSL-required Postgres connection (parameter group enforces it)
- *       3. Custom JWT auth at the app layer
+ *       1. Auto-generated strong RDS password (in Secrets Manager,
+ *          rotated by RDS not by us).
+ *       2. SSL forced server-side via the Postgres parameter group
+ *          (`rds.force_ssl=1`, attached in DataStack), and the
+ *          backend also passes `?ssl=require` in the assembled DSN
+ *          (`backend/app/core/aws_secrets.py`) so the client refuses
+ *          plaintext fallback.
+ *       3. Custom JWT auth at the app layer.
  *     For dev this is acceptable; prod will narrow when we adopt a
  *     VPC connector (P11.x) or move to RDS Proxy / Aurora Data API.
  *

@@ -71,6 +71,11 @@ def assemble_postgres_dsn(creds: dict[str, str | int]) -> str:
           "dbInstanceIdentifier": "..."
         }
 
+    `?ssl=require` is appended so asyncpg refuses plaintext fallback
+    even if the server happens to allow it. The RDS parameter group
+    sets `rds.force_ssl=1` server-side; this is the matching client
+    half (belt + suspenders).
+
     Returns the assembled DSN. Raises `KeyError` if a required field
     is missing — fatal startup failure is the correct response.
     """
@@ -79,6 +84,7 @@ def assemble_postgres_dsn(creds: dict[str, str | int]) -> str:
         f"{creds['username']}:{creds['password']}"
         f"@{creds['host']}:{creds['port']}"
         f"/{creds['dbname']}"
+        "?ssl=require"
     )
 
 
