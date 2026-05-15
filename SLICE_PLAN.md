@@ -2,7 +2,7 @@
 
 > **This file is the operating manual for the current Claude Code session and any successor sessions (compaction, dispatcher pattern, fresh context).** Read this top-to-bottom before editing code. When state changes (a slice merges, a deploy fact shifts, a known issue is resolved), update this file in the same commit.
 
-**Last updated:** 2026-05-15 (after Slice 6 merge — all feature slices on main; polish pass next).
+**Last updated:** 2026-05-15 (all feature slices + polish pass on main; deploy batch is the only remaining work in the 24h budget).
 
 ---
 
@@ -17,9 +17,10 @@
 | Slice 3 — Image generation (gpt-image-1 + local storage) | ✅ shipped in [#139](https://github.com/Eslam93/MagnaCMS/pull/139), merged into main |
 | Slice 5 — Improver (analyze + rewrite + side-by-side diff) | ✅ shipped in [#140](https://github.com/Eslam93/MagnaCMS/pull/140), merged into main |
 | Slice 6 — Brand voice mini (CRUD + inject into generate) | ✅ shipped in [#141](https://github.com/Eslam93/MagnaCMS/pull/141), merged into main |
+| Polish — seed script, account page, README live URLs | ✅ shipped in [#142](https://github.com/Eslam93/MagnaCMS/pull/142), merged into main |
 | Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded**. Image S3 swap deferred to deploy batch. |
 | Deploy-time fixes (em-dash, NoDecode, migration env, Fargate SG) | em-dash + NoDecode: code in repo. Migration env + SG: documented in §4 as deploy-time TODOs (band-aided live, CDK code unchanged). |
-| Remaining slices | none — polish pass next |
+| Remaining work in 24h budget | Deploy batch only — frontend zip upload + the six SLICE_PLAN §4 deploy-time fixes. |
 | Time budget | **12 hours of local-first feature work, then 1-2h batch deploy + polish at the end of 24h.** |
 
 ### Live deploy snapshot (preserve — do NOT redeploy in this 12h window)
@@ -91,14 +92,7 @@ Order: **2 → 4 → 3 → 5 → 6**. Rationale: Slice 4 (dashboard) before Slic
 
 ### Polish + Slice 7 (combined into final pass)
 
-**Branch:** `polish/demo-readiness`. **Budget:** ~1.5h.
-
-Done when:
-- [ ] `backend/app/scripts/seed.py` — creates demo user (email + password printed), one brand voice, three example content pieces with images, one improvement.
-- [ ] README §1: paste live URLs (`https://main.dew27gk9z09jh.amplifyapp.com` once frontend is up, `https://grsv8u4uit.us-east-1.awsapprunner.com/api/v1/health` for backend) and demo credentials.
-- [ ] Skim each protected page for empty/error/loading states. Toast notifications on every mutation.
-- [ ] Mobile width sanity pass at 375px.
-- [ ] DEVLOG final entry.
+✅ **Shipped in [#142](https://github.com/Eslam93/MagnaCMS/pull/142).** `backend/app/scripts/seed.py` is an idempotent seeder for the demo user + one brand voice + three content pieces (each with an image) + one improvement, all via mock providers. README §1 now carries the live App Runner URL, the `/docs` swagger, demo credentials, and the seed invocation. `/settings` replaced its stub with a read-only account page (`/auth/me`); `/usage` refreshed to point at where cost data already lives on each row. DEVLOG final entry covers the cut list (frontend zip upload, S3 storage swap, per-account rate limit, SSE for the improver).
 
 ---
 
