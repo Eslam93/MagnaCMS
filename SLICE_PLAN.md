@@ -2,7 +2,7 @@
 
 > **This file is the operating manual for the current Claude Code session and any successor sessions (compaction, dispatcher pattern, fresh context).** Read this top-to-bottom before editing code. When state changes (a slice merges, a deploy fact shifts, a known issue is resolved), update this file in the same commit.
 
-**Last updated:** 2026-05-15 (after Slice 5 merge — improver chain shipped).
+**Last updated:** 2026-05-15 (after Slice 6 merge — all feature slices on main; polish pass next).
 
 ---
 
@@ -16,9 +16,10 @@
 | Slice 4 — Dashboard (list + detail + soft delete) | ✅ shipped in [#138](https://github.com/Eslam93/MagnaCMS/pull/138), merged into main |
 | Slice 3 — Image generation (gpt-image-1 + local storage) | ✅ shipped in [#139](https://github.com/Eslam93/MagnaCMS/pull/139), merged into main |
 | Slice 5 — Improver (analyze + rewrite + side-by-side diff) | ✅ shipped in [#140](https://github.com/Eslam93/MagnaCMS/pull/140), merged into main |
+| Slice 6 — Brand voice mini (CRUD + inject into generate) | ✅ shipped in [#141](https://github.com/Eslam93/MagnaCMS/pull/141), merged into main |
 | Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded**. Image S3 swap deferred to deploy batch. |
 | Deploy-time fixes (em-dash, NoDecode, migration env, Fargate SG) | em-dash + NoDecode: code in repo. Migration env + SG: documented in §4 as deploy-time TODOs (band-aided live, CDK code unchanged). |
-| Remaining slices | 6 (then polish) |
+| Remaining slices | none — polish pass next |
 | Time budget | **12 hours of local-first feature work, then 1-2h batch deploy + polish at the end of 24h.** |
 
 ### Live deploy snapshot (preserve — do NOT redeploy in this 12h window)
@@ -86,21 +87,7 @@ Order: **2 → 4 → 3 → 5 → 6**. Rationale: Slice 4 (dashboard) before Slic
 
 ### Slice 6 — Brand voice (mini)
 
-**Branch:** `slice-6/brand-voice-mini`. **Budget:** ~1.5h.
-
-Done when:
-- [ ] Backend:
-  - `backend/app/schemas/brand_voice.py` — `BrandVoiceCreate`, `BrandVoiceUpdate`, `BrandVoiceResponse`.
-  - `backend/app/services/brand_voice_service.py` + `repositories/brand_voice_repository.py`.
-  - `GET /api/v1/brand-voices`, `POST /api/v1/brand-voices`, `GET /:id`, `PATCH /:id`, `DELETE /:id`.
-  - Prompt injection: when `GenerateRequest.brand_voice_id` is present, fetch the voice and pass `brand_voice_block` to each prompt's `build_prompt()` per §7.7 of brief. All four prompt modules already accept `brand_voice_block: str | None = None`.
-- [ ] Frontend `app/(protected)/brand-voices/page.tsx`:
-  - List of own voices with create/edit/delete affordances.
-  - `BrandVoiceForm` component (name, description, tone_descriptors as comma-separated input, banned_words, sample_text, target_audience).
-- [ ] `generate-form.tsx`: add an optional brand-voice dropdown (fetched via TanStack Query). Selected voice id flows into the generate request.
-- [ ] Tests: backend integration tests for CRUD; frontend smoke covering form + injection.
-- [ ] DEVLOG; README §6 update.
-- [ ] PR title: `[Slice 6] Brand voice mini: CRUD + inject into generate`
+✅ **Shipped in [#141](https://github.com/Eslam93/MagnaCMS/pull/141).** `BrandVoiceRepository` + `render_brand_voice_block` + `/brand-voices` CRUD router (list / create / detail / PATCH with `model_fields_set` semantics / delete). `ContentService.generate` resolves an optional `brand_voice_id`, fetches the voice, and threads the rendered block into `bundle.build_prompt(...)` — every per-type prompt module accepted `brand_voice_block` from Slice 1. Frontend ships the `/brand-voices` page (list + form for create/edit) plus a dropdown on the generate form. Tests: 217 backend pass (4 new unit), 7 new integration locally skip; 27 frontend pass (+4 BrandVoicesList).
 
 ### Polish + Slice 7 (combined into final pass)
 
