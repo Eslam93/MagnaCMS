@@ -91,7 +91,7 @@ describe("GenerateForm", () => {
     };
   });
 
-  it("shows blog post enabled and other content types disabled with tooltips", () => {
+  it("shows every content type enabled and clickable", () => {
     renderWithProviders(<GenerateForm />);
     const tabs = screen.getByTestId("content-type-tabs");
     const blogTab = within(tabs).getByTestId("content-type-tab-blog_post");
@@ -100,10 +100,24 @@ describe("GenerateForm", () => {
 
     for (const value of ["linkedin_post", "email", "ad_copy"]) {
       const tab = within(tabs).getByTestId(`content-type-tab-${value}`);
-      expect(tab).toBeDisabled();
-      expect(tab).toHaveAttribute("aria-disabled", "true");
-      expect(tab).toHaveAttribute("title", "Coming in Slice 2");
+      expect(tab).not.toBeDisabled();
+      expect(tab).toHaveAttribute("aria-disabled", "false");
+      expect(tab).not.toHaveAttribute("title");
     }
+  });
+
+  it("switches content type when a different tab is clicked", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GenerateForm />);
+    const tabs = screen.getByTestId("content-type-tabs");
+    await user.click(within(tabs).getByTestId("content-type-tab-linkedin_post"));
+    await user.type(screen.getByTestId("generate-topic"), "A meaningful topic");
+    await user.click(screen.getByTestId("generate-submit"));
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    expect(mockMutate.mock.calls[0][0]).toMatchObject({
+      content_type: "linkedin_post",
+      topic: "A meaningful topic",
+    });
   });
 
   it("blocks submit when topic is below the min length", async () => {

@@ -1,11 +1,12 @@
 """Pydantic request / response schemas for /content/* endpoints.
 
-Slice 1 ships blog-post generation only. The request body and the response
-envelope are typed for every supported content type from day one, so adding
-LinkedIn / email / ad-copy in Slice 2 is a Pydantic-only change — no route
-signature churn. Each per-type result model is a strict validator: the
-content service runs the LLM output through it and the three-stage parse
-fallback (parse → retry → degrade) keys off Pydantic ValidationError.
+Slice 2 widens the response result to a union across all four content
+types — blog post, LinkedIn post, email, ad copy. Each per-type model
+forbids extras so a provider response with the right keys plus garbage
+triggers the corrective-retry path rather than silently passing through.
+The content service runs the LLM output through the right model
+according to `request.content_type`; that registry lives in
+`services/content_service.py`.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,10 +26,9 @@ from app.db.enums import ContentType, ResultParseStatus
 class GenerateRequest(BaseModel):
     """Body for POST /content/generate.
 
-    `content_type` is open to every value in the enum so the schema can
-    cover future slices, but the router rejects anything except
-    BLOG_POST in Slice 1 with a 400. That validation lives in the
-    router, not here, to keep the schema slice-agnostic.
+    `content_type` is open to every value in the enum from day one.
+    Slice 1 rejected non-blog types in the router with 422; Slice 2 now
+    accepts all four. Brand-voice injection arrives in Slice 6.
     """
 
     content_type: ContentType
@@ -64,6 +64,81 @@ class BlogPostResult(BaseModel):
     suggested_tags: Annotated[list[str], Field(min_length=1, max_length=10)]
 
 
+class LinkedInPostResult(BaseModel):
+    """Structured shape the LinkedIn-post prompt returns.
+
+    Mirrors §7.2 of PROJECT_BRIEF.md. Hashtags are stored without the
+    leading `#` so the renderer is the single place that adds it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hook: Annotated[str, Field(min_length=1, max_length=500)]
+    body: Annotated[str, Field(min_length=1)]
+    cta: Annotated[str, Field(min_length=1, max_length=500)]
+    hashtags: Annotated[list[str], Field(min_length=1, max_length=10)]
+
+
+class EmailResult(BaseModel):
+    """Structured shape the email prompt returns.
+
+    Mirrors §7.4 of PROJECT_BRIEF.md. The subject + preview pair is what
+    inboxes show before open; the body is the read content.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: Annotated[str, Field(min_length=1, max_length=140)]
+    preview_text: Annotated[str, Field(min_length=1, max_length=200)]
+    greeting: Annotated[str, Field(min_length=1, max_length=200)]
+    body: Annotated[str, Field(min_length=1)]
+    cta_text: Annotated[str, Field(min_length=1, max_length=80)]
+    sign_off: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+AdCopyFormat = Literal["short", "medium", "long"]
+AdCopyAngle = Literal[
+    "curiosity",
+    "social_proof",
+    "transformation",
+    "urgency",
+    "problem_solution",
+]
+
+
+class AdCopyVariant(BaseModel):
+    """A single ad variant inside an `AdCopyResult.variants` list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: AdCopyFormat
+    angle: AdCopyAngle
+    headline: Annotated[str, Field(min_length=1, max_length=200)]
+    body: Annotated[str, Field(min_length=1, max_length=1000)]
+    cta: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class AdCopyResult(BaseModel):
+    """Structured shape the ad-copy prompt returns.
+
+    Mirrors §7.3 of PROJECT_BRIEF.md. Three variants, one per format
+    (short / medium / long). The service-layer corrective retry catches
+    the case where the model returned two or four — `model_validate`
+    enforces the count via `min_length`/`max_length`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    variants: Annotated[list[AdCopyVariant], Field(min_length=3, max_length=3)]
+
+
+# Union of every per-type result. Order matters in some Pydantic versions
+# for discriminator-less unions, but `extra="forbid"` on each model means
+# the wrong-typed payload will always fail validation rather than be
+# accepted into the wrong slot.
+ContentResult = BlogPostResult | LinkedInPostResult | EmailResult | AdCopyResult
+
+
 # ── Response ───────────────────────────────────────────────────────────
 
 
@@ -86,7 +161,7 @@ class GenerateResponse(BaseModel):
 
     content_id: uuid.UUID
     content_type: ContentType
-    result: BlogPostResult | None
+    result: ContentResult | None
     rendered_text: str
     result_parse_status: ResultParseStatus
     word_count: int
@@ -94,16 +169,19 @@ class GenerateResponse(BaseModel):
     created_at: datetime
 
 
-# Re-exports keep the per-slice surface tidy: any future slice that
-# adds LinkedIn / email / ad-copy result models can append to this list
-# and update the `GenerateResponse.result` union without touching call
-# sites that import the schema name.
 __all__ = [
+    "AdCopyAngle",
+    "AdCopyFormat",
+    "AdCopyResult",
+    "AdCopyVariant",
     "BlogPostResult",
     "BlogPostSection",
+    "ContentResult",
     "ContentType",
+    "EmailResult",
     "GenerateRequest",
     "GenerateResponse",
     "GenerateUsage",
+    "LinkedInPostResult",
     "ResultParseStatus",
 ]

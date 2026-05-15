@@ -69,7 +69,7 @@ export interface components {
       };
     };
 
-    // ── Content (Slice 1: blog_post only) ────────────────────────
+    // ── Content (Slice 2: all four text types) ───────────────────
     ContentType: "blog_post" | "linkedin_post" | "ad_copy" | "email";
     ResultParseStatus: "ok" | "retried" | "failed";
     BlogPostSection: {
@@ -84,6 +84,46 @@ export interface components {
       conclusion: string;
       suggested_tags: string[];
     };
+    LinkedInPostResult: {
+      hook: string;
+      body: string;
+      cta: string;
+      hashtags: string[];
+    };
+    EmailResult: {
+      subject: string;
+      preview_text: string;
+      greeting: string;
+      body: string;
+      cta_text: string;
+      sign_off: string;
+    };
+    AdCopyFormat: "short" | "medium" | "long";
+    AdCopyAngle:
+      | "curiosity"
+      | "social_proof"
+      | "transformation"
+      | "urgency"
+      | "problem_solution";
+    AdCopyVariant: {
+      format: components["schemas"]["AdCopyFormat"];
+      angle: components["schemas"]["AdCopyAngle"];
+      headline: string;
+      body: string;
+      cta: string;
+    };
+    AdCopyResult: {
+      variants: components["schemas"]["AdCopyVariant"][];
+    };
+    // Discriminated by `content_type` at the response level — but
+    // openapi-typescript doesn't model discriminated unions natively,
+    // so this is a flat union and the consumer narrows by inspecting
+    // `content_type` on the response.
+    ContentResult:
+      | components["schemas"]["BlogPostResult"]
+      | components["schemas"]["LinkedInPostResult"]
+      | components["schemas"]["EmailResult"]
+      | components["schemas"]["AdCopyResult"];
     GenerateRequest: {
       content_type: components["schemas"]["ContentType"];
       topic: string;
@@ -102,7 +142,7 @@ export interface components {
     GenerateResponse: {
       content_id: string;
       content_type: components["schemas"]["ContentType"];
-      result: components["schemas"]["BlogPostResult"] | null;
+      result: components["schemas"]["ContentResult"] | null;
       rendered_text: string;
       result_parse_status: components["schemas"]["ResultParseStatus"];
       word_count: number;

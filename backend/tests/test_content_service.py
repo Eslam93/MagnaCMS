@@ -4,6 +4,10 @@ The service is exercised end-to-end against a real test session in
 `tests/integration/test_content_routes.py`. This file uses fake
 providers + in-memory factories to lock the fallback semantics without
 spinning up Postgres.
+
+Slice 2 widened the service from blog-only to a registry-based
+dispatch; the fallback semantics still apply to every content type, so
+the same suite runs once per type via parametrization.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.db.enums import ResultParseStatus
+from app.db.enums import ContentType, ResultParseStatus
 from app.providers.llm.base import LLMResult
 from app.schemas.content import GenerateRequest
 from app.services.content_service import ContentService
@@ -75,42 +79,95 @@ def _fake_provider(raw_texts: list[str]) -> AsyncMock:
     return mock
 
 
-_VALID_BLOG_JSON = json.dumps(
-    {
+# Valid canned payloads per content type. Shapes mirror the Pydantic
+# models in `app.schemas.content`. Used by parametrized fallback tests.
+_VALID_PAYLOADS: dict[ContentType, dict[str, Any]] = {
+    ContentType.BLOG_POST: {
         "title": "Mocks in CI",
         "meta_description": "A short explanation.",
         "intro": "Why we mock.",
         "sections": [{"heading": "H", "body": "B"}],
         "conclusion": "Done.",
         "suggested_tags": ["mock"],
-    }
-)
+    },
+    ContentType.LINKEDIN_POST: {
+        "hook": "Hook line.",
+        "body": "Body content.",
+        "cta": "Do this.",
+        "hashtags": ["ai"],
+    },
+    ContentType.EMAIL: {
+        "subject": "Subject line",
+        "preview_text": "Preview text here.",
+        "greeting": "Hi,",
+        "body": "Body.",
+        "cta_text": "Click",
+        "sign_off": "— Team",
+    },
+    ContentType.AD_COPY: {
+        "variants": [
+            {
+                "format": "short",
+                "angle": "curiosity",
+                "headline": "Short hook",
+                "body": "Short body",
+                "cta": "Try it",
+            },
+            {
+                "format": "medium",
+                "angle": "social_proof",
+                "headline": "Medium headline",
+                "body": "Medium body.",
+                "cta": "See more",
+            },
+            {
+                "format": "long",
+                "angle": "transformation",
+                "headline": "Long headline",
+                "body": "Long body with detail.",
+                "cta": "Read more",
+            },
+        ],
+    },
+}
 
 
-def _request() -> GenerateRequest:
+_ALL_CONTENT_TYPES = list(_VALID_PAYLOADS.keys())
+
+
+def _valid_json(content_type: ContentType) -> str:
+    return json.dumps(_VALID_PAYLOADS[content_type])
+
+
+def _request(content_type: ContentType = ContentType.BLOG_POST) -> GenerateRequest:
     return GenerateRequest(
-        content_type="blog_post",  # type: ignore[arg-type]
+        content_type=content_type,
         topic="A topic for testing",
         tone="informative",
         target_audience="engineers",
     )
 
 
+def _user() -> Any:
+    return type("U", (), {"id": "00000000-0000-0000-0000-000000000001"})()
+
+
 # ── tests ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_attempt_1_success_status_ok() -> None:
+@pytest.mark.parametrize("content_type", _ALL_CONTENT_TYPES, ids=lambda ct: ct.value)
+async def test_attempt_1_success_status_ok(content_type: ContentType) -> None:
     session = _RecordingSession()
-    provider = _fake_provider([_VALID_BLOG_JSON])
+    provider = _fake_provider([_valid_json(content_type)])
     service = ContentService(session, provider)  # type: ignore[arg-type]
 
-    user = type("U", (), {"id": "00000000-0000-0000-0000-000000000001"})()
-    piece = await service.generate_blog_post(user=user, request=_request())  # type: ignore[arg-type]
+    piece = await service.generate(user=_user(), request=_request(content_type))
 
     assert piece.result_parse_status == ResultParseStatus.OK
     assert piece.result is not None
-    assert piece.rendered_text.startswith("# Mocks in CI")
+    assert piece.content_type == content_type
+    assert piece.rendered_text, "rendered_text should be non-empty on OK"
     assert provider.generate.await_count == 1
     assert piece.input_tokens == 5
     assert piece.output_tokens == 7
@@ -118,13 +175,13 @@ async def test_attempt_1_success_status_ok() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attempt_2_corrective_retry_status_retried() -> None:
+@pytest.mark.parametrize("content_type", _ALL_CONTENT_TYPES, ids=lambda ct: ct.value)
+async def test_attempt_2_corrective_retry_status_retried(content_type: ContentType) -> None:
     session = _RecordingSession()
-    provider = _fake_provider(["not json at all", _VALID_BLOG_JSON])
+    provider = _fake_provider(["not json at all", _valid_json(content_type)])
     service = ContentService(session, provider)  # type: ignore[arg-type]
 
-    user = type("U", (), {"id": "00000000-0000-0000-0000-000000000001"})()
-    piece = await service.generate_blog_post(user=user, request=_request())  # type: ignore[arg-type]
+    piece = await service.generate(user=_user(), request=_request(content_type))
 
     assert piece.result_parse_status == ResultParseStatus.RETRIED
     assert piece.result is not None
@@ -138,13 +195,13 @@ async def test_attempt_2_corrective_retry_status_retried() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attempt_3_graceful_degrade_status_failed() -> None:
+@pytest.mark.parametrize("content_type", _ALL_CONTENT_TYPES, ids=lambda ct: ct.value)
+async def test_attempt_3_graceful_degrade_status_failed(content_type: ContentType) -> None:
     session = _RecordingSession()
     provider = _fake_provider(["{bad json", "still bad"])
     service = ContentService(session, provider)  # type: ignore[arg-type]
 
-    user = type("U", (), {"id": "00000000-0000-0000-0000-000000000001"})()
-    piece = await service.generate_blog_post(user=user, request=_request())  # type: ignore[arg-type]
+    piece = await service.generate(user=_user(), request=_request(content_type))
 
     assert piece.result_parse_status == ResultParseStatus.FAILED
     assert piece.result is None
@@ -162,11 +219,10 @@ async def test_valid_json_wrong_schema_falls_through_to_retry() -> None:
     """
     session = _RecordingSession()
     wrong_shape = json.dumps({"this_is_not": "a blog post"})
-    provider = _fake_provider([wrong_shape, _VALID_BLOG_JSON])
+    provider = _fake_provider([wrong_shape, _valid_json(ContentType.BLOG_POST)])
     service = ContentService(session, provider)  # type: ignore[arg-type]
 
-    user = type("U", (), {"id": "00000000-0000-0000-0000-000000000001"})()
-    piece = await service.generate_blog_post(user=user, request=_request())  # type: ignore[arg-type]
+    piece = await service.generate(user=_user(), request=_request())
 
     assert piece.result_parse_status == ResultParseStatus.RETRIED
     assert piece.result is not None
@@ -178,9 +234,51 @@ async def test_prompt_snapshot_persisted_even_on_failure() -> None:
     provider = _fake_provider(["bad", "still bad"])
     service = ContentService(session, provider)  # type: ignore[arg-type]
 
-    user = type("U", (), {"id": "00000000-0000-0000-0000-000000000001"})()
-    piece = await service.generate_blog_post(user=user, request=_request())  # type: ignore[arg-type]
+    piece = await service.generate(user=_user(), request=_request())
 
     assert piece.system_prompt_snapshot
     assert piece.user_prompt_snapshot
     assert piece.prompt_version == "blog_post.v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_type,expected_version",
+    [
+        (ContentType.BLOG_POST, "blog_post.v1"),
+        (ContentType.LINKEDIN_POST, "linkedin_post.v1"),
+        (ContentType.EMAIL, "email.v1"),
+        (ContentType.AD_COPY, "ad_copy.v1"),
+    ],
+    ids=lambda x: x.value if isinstance(x, ContentType) else x,
+)
+async def test_prompt_version_pinned_per_content_type(
+    content_type: ContentType, expected_version: str
+) -> None:
+    """The registry must wire each content type to its versioned prompt
+    module so old rows stay traceable to the template that produced
+    them."""
+    session = _RecordingSession()
+    provider = _fake_provider([_valid_json(content_type)])
+    service = ContentService(session, provider)  # type: ignore[arg-type]
+
+    piece = await service.generate(user=_user(), request=_request(content_type))
+    assert piece.prompt_version == expected_version
+
+
+@pytest.mark.asyncio
+async def test_attempt_1_sends_strict_json_schema_for_each_type() -> None:
+    """First-pass call always carries the per-type strict json_schema
+    payload — the retry path is the only place it's omitted."""
+    session = _RecordingSession()
+    provider = _fake_provider([_valid_json(ContentType.LINKEDIN_POST)])
+    service = ContentService(session, provider)  # type: ignore[arg-type]
+
+    await service.generate(user=_user(), request=_request(ContentType.LINKEDIN_POST))
+
+    _, kwargs = provider.generate.call_args_list[0]
+    schema = kwargs["json_schema"]
+    assert schema is not None
+    # LinkedIn schema's required keys are the discriminator we can
+    # check without coupling to the exact dict identity.
+    assert set(schema["required"]) == {"hook", "body", "cta", "hashtags"}

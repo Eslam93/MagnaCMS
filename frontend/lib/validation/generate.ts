@@ -12,9 +12,9 @@ import type { components } from "@/types/api";
 type ContentType = components["schemas"]["ContentType"];
 
 /**
- * Content types the form offers. Slice 1 enables blog_post only;
- * the other entries render disabled with a tooltip so the UI doesn't
- * change shape when Slice 2 widens support.
+ * Content types the form offers. Slice 2 enables all four — the shape
+ * (and the `enabled` flag) is preserved so future slices can disable
+ * specific types behind feature flags without changing the layout.
  */
 export const CONTENT_TYPE_OPTIONS: ReadonlyArray<{
   value: ContentType;
@@ -23,24 +23,9 @@ export const CONTENT_TYPE_OPTIONS: ReadonlyArray<{
   tooltip?: string;
 }> = [
   { value: "blog_post", label: "Blog post", enabled: true },
-  {
-    value: "linkedin_post",
-    label: "LinkedIn post",
-    enabled: false,
-    tooltip: "Coming in Slice 2",
-  },
-  {
-    value: "email",
-    label: "Email",
-    enabled: false,
-    tooltip: "Coming in Slice 2",
-  },
-  {
-    value: "ad_copy",
-    label: "Ad copy",
-    enabled: false,
-    tooltip: "Coming in Slice 2",
-  },
+  { value: "linkedin_post", label: "LinkedIn post", enabled: true },
+  { value: "email", label: "Email", enabled: true },
+  { value: "ad_copy", label: "Ad copy", enabled: true },
 ];
 
 export const generateSchema = z.object({

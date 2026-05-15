@@ -12,7 +12,6 @@ export type GenerateResponse = components["schemas"]["GenerateResponse"];
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 
 const FRIENDLY_MESSAGES: Record<string, string> = {
-  UNSUPPORTED_CONTENT_TYPE: "That content type isn't available yet — Slice 2 widens this.",
   VALIDATION_FAILED: "Some fields don't look right — check the form.",
   RATE_LIMITED: "You've hit the per-minute generate limit. Wait a minute and try again.",
   MISSING_TOKEN: "Your session has expired. Sign in again.",
