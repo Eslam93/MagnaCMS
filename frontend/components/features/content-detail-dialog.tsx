@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 
+import { ImagePanel } from "@/components/features/image-panel";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 
@@ -91,6 +92,11 @@ export function ContentDetailDialog({ contentId, onClose }: Props) {
               <ReactMarkdown>{detail.data.rendered_text}</ReactMarkdown>
             )}
           </div>
+
+          <ImagePanel
+            contentId={detail.data.id}
+            disabled={detail.data.result_parse_status === "failed"}
+          />
         </div>
       ) : null}
     </Modal>

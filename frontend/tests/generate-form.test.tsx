@@ -49,6 +49,30 @@ vi.mock("@/lib/content/hooks", () => {
   };
 });
 
+// ImagePanel is rendered when generation succeeds — stub its hooks so
+// the test doesn't fire a real fetch against the (missing) backend.
+vi.mock("@/lib/content/image-hooks", () => ({
+  IMAGE_STYLES: [
+    { value: "photorealistic", label: "Photorealistic" },
+    { value: "illustration", label: "Illustration" },
+  ],
+  useImageListQuery: () => ({
+    data: { data: [] },
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useImageGenerateMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+}));
+
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
+  Toaster: () => null,
+}));
+
 // Mutable state the mocked hook returns. Tests flip this to walk through
 // idle → pending → success / error.
 let mutationState: {

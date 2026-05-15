@@ -4,6 +4,36 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Slice 3: image generation, two providers, one pipeline
+
+The dashboard had words but no pictures. Slice 3 fixes that: every content piece can now get an `is_current` image generated, regenerated with a different style, and reviewed against prior versions. Two upstream calls per image — an LLM call to *build the visual prompt* from the rendered content, then the image provider call to produce the bytes — feed one storage adapter that writes to local disk in dev and (soon) S3 in prod.
+
+### Two stages, one transaction, one canonical "current"
+
+The flow inside [`ImageService.generate_for_content`](backend/app/services/image_service.py):
+
+1. Validate the requested style against the six in the brief; bail with `UNSUPPORTED_IMAGE_STYLE` early.
+2. Fetch the content piece; reject `CONTENT_NOT_FOUND` (or `CONTENT_NOT_READY_FOR_IMAGE` if the content's parse_status was `failed`).
+3. Call the LLM with the content's `rendered_text` (truncated to 4000 chars) + style; parse against `ImagePromptResult`. On parse failure, fall back to a topic-derived default rather than spend a retry call — the worst case is a less-tuned prompt, not a broken UX.
+4. Fold the `negative_prompt` into the positive prompt as an "Avoid: ..." clause (since `gpt-image-1` doesn't accept a separate negative field), then call the image provider.
+5. Upload bytes via the storage adapter, flip any previous `is_current=true` row to false, insert the new row as `is_current=true`. Single transaction; the partial unique index `ix_generated_images_current_per_piece` enforces "at most one current per piece" at the DB level.
+
+The previous-versions strip on the frontend renders straight from `list_for_content`, which returns every row newest-first — including the now-superseded ones.
+
+### Local-disk storage today, S3 swap pending deploy
+
+[`image_storage.py`](backend/app/services/image_storage.py) defines an `IImageStorage` protocol with two implementations in mind: `LocalImageStorage` (this slice) writes UUID-named PNGs into `backend/local_images/` and returns the URL FastAPI's `/local-images/*` static mount serves them from; an `S3ImageStorage` (deferred to deploy batch) will swap to `boto3.put_object` + presigned URL with no caller changes. The factory `build_image_storage()` picks based on `IMAGES_CDN_BASE_URL`; today every environment is `localhost:8000/local-images` until the deploy batch reroutes it. The directory is gitignored.
+
+### gpt-image-1 quirks worth knowing for next time
+
+`gpt-image-1` returns `b64_json` by default, not a URL. The [provider already decodes it](backend/app/providers/image/openai_provider.py) into raw bytes; the storage adapter takes raw bytes. Quality maps directly: `low → $0.011`, `medium → $0.042`, `high → $0.167` per 1024×1024 image. `OPENAI_IMAGE_QUALITY=low` is the local default to keep the bill sane during iteration; the demo deploy will use `medium`.
+
+### Frontend: one panel, two surfaces
+
+[`ImagePanel`](frontend/components/features/image-panel.tsx) is one component used in two places: the post-generate success view (right after content lands), and the dashboard's detail dialog (any time later). Same query key, same mutation, same cache invalidation — invalidating `["content", "images", contentId]` after a regenerate is enough for the panel anywhere it's mounted to re-fetch.
+
+---
+
 ## 2026-05-15 — Slice 4: the dashboard that makes Slices 1 and 2 feel real
 
 Slice 1 generated a blog post. Slice 2 widened that to four content types. But the only way to view what you'd generated was to keep the success panel from the form open — once you navigated away, the row was effectively invisible. Slice 4 fixes that: a real dashboard list, scoped to the caller, with content-type filter, full-text search, pagination, a click-into-detail dialog, and a per-card delete with a 24-hour restore window.

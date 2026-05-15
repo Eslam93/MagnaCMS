@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 
+import { ImagePanel } from "@/components/features/image-panel";
 import { Button } from "@/components/ui/button";
 
 import type { GenerateResponse } from "@/lib/content/hooks";
@@ -74,6 +75,8 @@ export function GenerateResult({ data }: { data: GenerateResponse }) {
           <ReactMarkdown>{data.rendered_text}</ReactMarkdown>
         )}
       </div>
+
+      <ImagePanel contentId={data.content_id} disabled={isDegraded} />
     </article>
   );
 }

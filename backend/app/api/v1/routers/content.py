@@ -21,8 +21,9 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.core.request_context import get_request_id
 from app.db.enums import ContentType
 from app.db.session import DbSession
-from app.providers.factory import get_llm_provider
+from app.providers.factory import get_image_provider, get_llm_provider
 from app.repositories.content_repository import ContentRepository
+from app.repositories.image_repository import ImageRepository
 from app.schemas.content import (
     AdCopyResult,
     BlogPostResult,
@@ -38,7 +39,15 @@ from app.schemas.content import (
     ListMeta,
     PaginationMeta,
 )
+from app.schemas.image import (
+    GeneratedImageResponse,
+    ImageGenerateRequest,
+    ImageGenerateResponse,
+    ImageListResponse,
+)
 from app.services.content_service import ContentService
+from app.services.image_service import ImageService
+from app.services.image_storage import build_image_storage
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -233,6 +242,60 @@ async def delete_content(
         model_id=piece.model_id,
         created_at=piece.created_at,
         deleted_at=piece.deleted_at,
+    )
+
+
+@router.post(
+    "/{content_id}/image",
+    response_model=ImageGenerateResponse,
+    summary="Generate an image for the content piece (becomes the current image).",
+)
+async def generate_image(
+    body: ImageGenerateRequest,
+    content_id: Annotated[uuid.UUID, Path()],
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ImageGenerateResponse:
+    """Build an image prompt from the content, generate the image, and
+    record a new `generated_images` row with `is_current=true`. Any
+    previously-current image for the piece is flipped to non-current
+    inside the same transaction (partial unique index enforces the
+    invariant)."""
+    service = ImageService(
+        db,
+        llm_provider=get_llm_provider(),
+        image_provider=get_image_provider(),
+        storage=build_image_storage(),
+    )
+    image = await service.generate_for_content(
+        user=current_user,
+        content_id=content_id,
+        style=body.style,
+    )
+    await db.commit()
+    return ImageGenerateResponse(
+        image=GeneratedImageResponse.model_validate(image, from_attributes=True),
+    )
+
+
+@router.get(
+    "/{content_id}/images",
+    response_model=ImageListResponse,
+    summary="List every image ever generated for this content piece.",
+)
+async def list_images(
+    content_id: Annotated[uuid.UUID, Path()],
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ImageListResponse:
+    repo = ContentRepository(db)
+    piece = await repo.get_for_user(content_id, current_user.id)
+    if piece is None:
+        raise NotFoundError("Content not found.", code="CONTENT_NOT_FOUND")
+    image_repo = ImageRepository(db)
+    rows = await image_repo.list_for_content(piece.id)
+    return ImageListResponse(
+        data=[GeneratedImageResponse.model_validate(row, from_attributes=True) for row in rows],
     )
 
 
