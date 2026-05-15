@@ -33,8 +33,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Final
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sentry_sdk.integrations.asyncio import AsyncioIntegration
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from app.api.v1.router import v1_router
 from app.core.config import get_settings
@@ -77,6 +81,25 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # Sentry: initialized at create_app time so it captures startup
+    # errors too. Silently no-ops when SENTRY_DSN is empty (the
+    # default), so dev environments never need Sentry credentials.
+    # P11.5 will polish PII scrubbing + source maps.
+    if settings.sentry_dsn:
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment.value,
+            release=settings.app_version,
+            traces_sample_rate=0.1,
+            send_default_pii=False,
+            integrations=[
+                FastApiIntegration(),
+                StarletteIntegration(),
+                AsyncioIntegration(),
+            ],
+        )
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
