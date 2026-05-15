@@ -28,6 +28,16 @@ export interface paths {
   "/content/generate": {
     post: operations["generateContent"];
   };
+  "/content": {
+    get: operations["listContent"];
+  };
+  "/content/{content_id}": {
+    get: operations["getContent"];
+    delete: operations["deleteContent"];
+  };
+  "/content/{content_id}/restore": {
+    post: operations["restoreContent"];
+  };
   "/health": {
     get: operations["health"];
   };
@@ -149,6 +159,46 @@ export interface components {
       usage: components["schemas"]["GenerateUsage"];
       created_at: string;
     };
+
+    // ── Dashboard list + detail (Slice 4) ────────────────────────
+    ContentListItem: {
+      id: string;
+      content_type: components["schemas"]["ContentType"];
+      topic: string;
+      preview: string;
+      word_count: number;
+      model_id: string;
+      result_parse_status: components["schemas"]["ResultParseStatus"];
+      created_at: string;
+    };
+    PaginationMeta: {
+      page: number;
+      page_size: number;
+      total: number;
+      total_pages: number;
+    };
+    ListMeta: {
+      request_id: string | null;
+      pagination: components["schemas"]["PaginationMeta"];
+    };
+    ContentListResponse: {
+      data: components["schemas"]["ContentListItem"][];
+      meta: components["schemas"]["ListMeta"];
+    };
+    ContentDetailResponse: {
+      id: string;
+      content_type: components["schemas"]["ContentType"];
+      topic: string;
+      tone: string | null;
+      target_audience: string | null;
+      result: components["schemas"]["ContentResult"] | null;
+      rendered_text: string;
+      result_parse_status: components["schemas"]["ResultParseStatus"];
+      word_count: number;
+      model_id: string;
+      created_at: string;
+      deleted_at: string | null;
+    };
   };
 }
 
@@ -266,6 +316,99 @@ export interface operations {
         };
       };
       429: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  listContent: {
+    parameters: {
+      query?: {
+        content_type?: components["schemas"]["ContentType"];
+        q?: string;
+        page?: number;
+        page_size?: number;
+      };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContentListResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  getContent: {
+    parameters: {
+      path: { content_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContentDetailResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  deleteContent: {
+    parameters: {
+      path: { content_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContentDetailResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  restoreContent: {
+    parameters: {
+      path: { content_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContentDetailResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      422: {
         content: {
           "application/json": components["schemas"]["ErrorEnvelope"];
         };

@@ -4,6 +4,32 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Slice 4: the dashboard that makes Slices 1 and 2 feel real
+
+Slice 1 generated a blog post. Slice 2 widened that to four content types. But the only way to view what you'd generated was to keep the success panel from the form open — once you navigated away, the row was effectively invisible. Slice 4 fixes that: a real dashboard list, scoped to the caller, with content-type filter, full-text search, pagination, a click-into-detail dialog, and a per-card delete with a 24-hour restore window.
+
+### Why server-side preview, not client-side truncation
+
+The list endpoint trims `rendered_text` to the first 200 chars + ellipsis before sending. The naive alternative — ship full `rendered_text`, truncate in CSS or JS — would have made the FTS hit and the visible preview come from different strings, which means a search match isn't necessarily visible in the card body the user sees. With server-side preview the relationship is exact: if `q` matched, the matched text is in the preview. That's a real UX win and the wire payload drops by an order of magnitude on long blog posts.
+
+### FTS uses `plainto_tsquery`, not raw `to_tsquery`
+
+The GIN index is already on `to_tsvector('english', rendered_text)` from the baseline migration. Querying it via `to_tsquery` requires the caller to know tsquery operator syntax — apostrophes, `&`/`|`, parens, all of which are common in free-form search input and would either error or do unexpected things. `plainto_tsquery` does the right normalization: strips operators, lowercases, stems. The Postgres planner still picks the GIN index because the expression matches the indexed form. See [`content_repository.list_for_user`](backend/app/repositories/content_repository.py).
+
+### Restore is a 24-hour soft-undo, not a separate trash UI
+
+`DELETE /content/:id` is a soft delete (sets `deleted_at`). `POST /content/:id/restore` flips it back if and only if the row's `deleted_at` is within 24 hours of `now()`. There's no separate "trash" page in the dashboard — restore is reachable only from the toast that fires immediately after delete, and only for that window. Once 24h pass, the row is dropped from the user's reach (kept in the table for cost-history / audit). The exact window is a const in the repository (`RESTORE_WINDOW`), tested at the integration level by aging `deleted_at` past it and asserting the structured `RESTORE_WINDOW_EXPIRED` error code.
+
+### Two error codes the frontend speaks plain English for
+
+`CONTENT_NOT_FOUND` (404) for an unknown id, `CONTENT_NOT_DELETED` and `RESTORE_WINDOW_EXPIRED` (422) for the two failure modes of restore. The frontend's [`FRIENDLY_MESSAGES`](frontend/lib/content/hooks.ts) maps each to a one-sentence toast so the user never sees `{ "error": { "code": ... } }`.
+
+### One UI primitive added
+
+[`components/ui/modal.tsx`](frontend/components/ui/modal.tsx) — a lightweight fixed-overlay modal with escape-to-close and backdrop-click-to-close. Not a Radix dialog because the slice didn't need focus trapping or nested triggers; the lock-file churn for a dependency that does one thing wasn't worth it. If the dashboard ever needs a wizard-style flow or richer keyboard semantics, swap to `@radix-ui/react-dialog` then.
+
+---
+
 ## 2026-05-15 — Slice 2: three more content types behind one registry
 
 Slice 1 shipped blog-post generation end-to-end. Slice 2 widens that to LinkedIn posts, marketing emails, and ad copy — same `POST /content/generate` route, same three-stage parse fallback, just three more prompts, three more Pydantic result models, three more renderers. The router's slice-1 content-type gate is gone; the form's three disabled tabs are now live.

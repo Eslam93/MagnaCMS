@@ -169,6 +169,71 @@ class GenerateResponse(BaseModel):
     created_at: datetime
 
 
+# ── Dashboard list / detail ────────────────────────────────────────────
+
+
+class ContentListItem(BaseModel):
+    """Preview-grade row for the dashboard list.
+
+    Carries everything the card needs without round-tripping the full
+    `result` JSON or full `rendered_text` — the preview is server-side
+    so the search-matched text stays in one place. The detail endpoint
+    returns the full payload when the card is opened.
+    """
+
+    id: uuid.UUID
+    content_type: ContentType
+    topic: str
+    preview: str
+    word_count: int
+    model_id: str
+    result_parse_status: ResultParseStatus
+    created_at: datetime
+
+
+class PaginationMeta(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class ListMeta(BaseModel):
+    request_id: str | None = None
+    pagination: PaginationMeta
+
+
+class ContentListResponse(BaseModel):
+    """Body for GET /content. Envelope mirrors the brief's standard
+    `{ data, meta }` shape with a `pagination` block under `meta`."""
+
+    data: list[ContentListItem]
+    meta: ListMeta
+
+
+class ContentDetailResponse(BaseModel):
+    """Body for GET /content/:id.
+
+    Same shape as `GenerateResponse` minus the `usage` block — the
+    dashboard doesn't surface per-call cost in the detail view (that
+    rolls up via `/usage/summary` later). Keep `id`/`content_type` so
+    the client doesn't have to merge with the list item.
+    """
+
+    id: uuid.UUID
+    content_type: ContentType
+    topic: str
+    tone: str | None
+    target_audience: str | None
+    result: ContentResult | None
+    rendered_text: str
+    result_parse_status: ResultParseStatus
+    word_count: int
+    model_id: str
+    created_at: datetime
+    deleted_at: datetime | None
+
+
 __all__ = [
     "AdCopyAngle",
     "AdCopyFormat",
@@ -176,6 +241,9 @@ __all__ = [
     "AdCopyVariant",
     "BlogPostResult",
     "BlogPostSection",
+    "ContentDetailResponse",
+    "ContentListItem",
+    "ContentListResponse",
     "ContentResult",
     "ContentType",
     "EmailResult",
@@ -183,5 +251,7 @@ __all__ = [
     "GenerateResponse",
     "GenerateUsage",
     "LinkedInPostResult",
+    "ListMeta",
+    "PaginationMeta",
     "ResultParseStatus",
 ]
