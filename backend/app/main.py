@@ -36,6 +36,7 @@ from typing import Final
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -49,6 +50,7 @@ from app.middleware.logging import AccessLogMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.request_id import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.services.image_storage import LOCAL_IMAGES_DIR
 
 # Per-path requests-per-minute caps. /auth/login + /auth/register are
 # the brief's explicit targets; /auth/refresh is added because the
@@ -139,6 +141,17 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(v1_router, prefix="/api/v1")
+
+    # Local-disk image serving for dev. When `IMAGES_CDN_BASE_URL`
+    # points elsewhere (e.g. CloudFront in prod), this mount is still
+    # harmless — the directory is created lazily by the storage layer
+    # on first write.
+    LOCAL_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/local-images",
+        StaticFiles(directory=str(LOCAL_IMAGES_DIR)),
+        name="local-images",
+    )
 
     return app
 

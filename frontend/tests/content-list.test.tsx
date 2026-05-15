@@ -96,6 +96,23 @@ const SAMPLE_DETAIL: ContentDetailResponse = {
   deleted_at: null,
 };
 
+vi.mock("@/lib/content/image-hooks", () => ({
+  IMAGE_STYLES: [
+    { value: "photorealistic", label: "Photorealistic" },
+    { value: "illustration", label: "Illustration" },
+  ],
+  useImageListQuery: () => ({
+    data: { data: [] },
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useImageGenerateMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+}));
+
 vi.mock("@/lib/content/hooks", () => ({
   useContentListQuery: () => ({
     data: SAMPLE_LIST,

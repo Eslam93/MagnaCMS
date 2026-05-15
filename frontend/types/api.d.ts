@@ -38,6 +38,12 @@ export interface paths {
   "/content/{content_id}/restore": {
     post: operations["restoreContent"];
   };
+  "/content/{content_id}/image": {
+    post: operations["generateImage"];
+  };
+  "/content/{content_id}/images": {
+    get: operations["listImages"];
+  };
   "/health": {
     get: operations["health"];
   };
@@ -198,6 +204,40 @@ export interface components {
       model_id: string;
       created_at: string;
       deleted_at: string | null;
+    };
+
+    // ── Images (Slice 3) ─────────────────────────────────────────
+    ImageStyle:
+      | "photorealistic"
+      | "illustration"
+      | "minimalist"
+      | "3d_render"
+      | "watercolor"
+      | "cinematic";
+    ImageProvider: "openai" | "nova_canvas";
+    GeneratedImage: {
+      id: string;
+      content_piece_id: string;
+      style: string | null;
+      provider: components["schemas"]["ImageProvider"];
+      model_id: string;
+      width: number;
+      height: number;
+      cdn_url: string;
+      image_prompt: string;
+      negative_prompt: string | null;
+      cost_usd: string;
+      is_current: boolean;
+      created_at: string;
+    };
+    ImageGenerateRequest: {
+      style?: components["schemas"]["ImageStyle"];
+    };
+    ImageGenerateResponse: {
+      image: components["schemas"]["GeneratedImage"];
+    };
+    ImageListResponse: {
+      data: components["schemas"]["GeneratedImage"][];
     };
   };
 }
@@ -409,6 +449,60 @@ export interface operations {
         };
       };
       422: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  generateImage: {
+    parameters: {
+      path: { content_id: string };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ImageGenerateRequest"];
+      };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ImageGenerateResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      422: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  listImages: {
+    parameters: {
+      path: { content_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ImageListResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
         content: {
           "application/json": components["schemas"]["ErrorEnvelope"];
         };
