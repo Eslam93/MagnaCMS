@@ -185,15 +185,51 @@ MagnaCMS/
 
 Full annotated set in [`.env.example`](./.env.example).
 
-## 9. Running tests
+## 9. Running tests & local CI parity
+
+The CI workflows (`.github/workflows/backend-ci.yml`, `frontend-ci.yml`,
+`infra-ci.yml`) run more than just the test suites — they also gate on
+**formatting** (`ruff format --check`, `prettier --check`), **type-checks**,
+**coverage thresholds**, and the **production build**. Run the full set
+locally before pushing to avoid the "tests passed locally but CI failed
+on prettier" trap:
 
 ```bash
-# Backend
-cd backend && uv run pytest --cov=app --cov-fail-under=80
+# Backend — mirrors backend-ci.yml exactly
+cd backend
+uv run ruff check .
+uv run ruff format --check .            # format gate (CI fails if dirty)
+uv run mypy app
+uv run pytest --cov=app --cov-fail-under=80   # 80% coverage gate
+# OpenAPI spec must be consumable by the frontend's codegen:
+uv run python -c "import json; from app.main import app; \
+  json.dump(app.openapi(), open('openapi-tmp.json', 'w'))"
+npx openapi-typescript@7.4 openapi-tmp.json -o /dev/null
+rm openapi-tmp.json
 
-# Frontend
-cd frontend && pnpm test --run
+# Frontend — mirrors frontend-ci.yml exactly
+cd frontend
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm format:check                       # format gate (CI fails if dirty)
+pnpm typecheck
+pnpm test
+pnpm build                              # next build must succeed
+
+# Infra — mirrors infra-ci.yml exactly
+cd infra
+npm ci
+npm run build
+npm test
 ```
+
+Fix surfaces:
+
+| If this fails | Run |
+|---|---|
+| `ruff format --check` | `uv run ruff format .` |
+| `pnpm format:check` | `pnpm format` |
+| `pnpm lint` (auto-fixable) | `pnpm lint --fix` |
 
 Playwright E2E (`@playwright/test` + a happy-path spec) is on the backlog
 but not wired yet — see [the open backlog](https://github.com/Eslam93/MagnaCMS/issues/86).

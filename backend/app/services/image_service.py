@@ -151,8 +151,7 @@ class ImageService:
         positive_prompt = prompt_outcome.payload.prompt
         if prompt_outcome.payload.negative_prompt.strip():
             positive_prompt = (
-                f"{positive_prompt}\n\n"
-                f"Avoid: {prompt_outcome.payload.negative_prompt.strip()}"
+                f"{positive_prompt}\n\nAvoid: {prompt_outcome.payload.negative_prompt.strip()}"
             )
         try:
             image_result = await self._image.generate(
@@ -235,10 +234,7 @@ class ImageService:
                 content_piece_id=str(piece.id),
             )
             parsed = ImagePromptResult(
-                prompt=(
-                    f"A {style.replace('_', ' ')} image inspired by: "
-                    f"{piece.topic.strip()}."
-                ),
+                prompt=(f"A {style.replace('_', ' ')} image inspired by: {piece.topic.strip()}."),
                 negative_prompt="text, watermark, logos, faces",
                 style_summary=style.replace("_", " "),
             )

@@ -309,9 +309,7 @@ class Settings(BaseSettings):
         if self.environment == Environment.LOCAL:
             return self
         offenders = [
-            origin
-            for origin in self.cors_origins
-            if "localhost" in origin or "127.0.0.1" in origin
+            origin for origin in self.cors_origins if "localhost" in origin or "127.0.0.1" in origin
         ]
         if offenders:
             raise ValueError(

@@ -106,7 +106,7 @@ def build_analyze(
         f"{original_text.strip()}\n"
         "---\n"
         "\n"
-        "Return JSON shaped as { \"issues\": [...], \"planned_changes\": [...] }:\n"
+        'Return JSON shaped as { "issues": [...], "planned_changes": [...] }:\n'
         "- `issues`: 2-6 short bullets. Concrete. Things a reader could verify against "
         "the original — no generic 'could be tighter' filler.\n"
         "- `planned_changes`: 2-6 short bullets. One-to-one with the issues where "
@@ -198,13 +198,13 @@ def build_rewrite(
         "\n"
         "Return JSON shaped as:\n"
         "{\n"
-        "  \"improved_text\": \"...\",\n"
-        "  \"explanation\": [\"...\", ...],\n"
-        "  \"changes_summary\": {\n"
-        "    \"tone_shift\": \"...\",\n"
-        "    \"length_change_pct\": <number>,\n"
-        "    \"key_additions\": [\"...\"],\n"
-        "    \"key_removals\": [\"...\"]\n"
+        '  "improved_text": "...",\n'
+        '  "explanation": ["...", ...],\n'
+        '  "changes_summary": {\n'
+        '    "tone_shift": "...",\n'
+        '    "length_change_pct": <number>,\n'
+        '    "key_additions": ["..."],\n'
+        '    "key_removals": ["..."]\n'
         "  }\n"
         "}\n"
         "\n"

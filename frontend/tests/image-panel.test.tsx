@@ -116,9 +116,7 @@ describe("ImagePanel", () => {
   });
 
   it("disables the Generate button when the panel is marked disabled", () => {
-    renderWithProviders(
-      <ImagePanel contentId="11111111-1111-1111-1111-111111111111" disabled />,
-    );
+    renderWithProviders(<ImagePanel contentId="11111111-1111-1111-1111-111111111111" disabled />);
     expect(screen.getByTestId("image-generate")).toBeDisabled();
   });
 });

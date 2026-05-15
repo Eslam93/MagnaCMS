@@ -44,7 +44,8 @@ export function ImproveResult({ data }: { data: ImprovementResponse }) {
           <span>{data.input_tokens + data.output_tokens} tokens</span>
           {" · "}
           <span>
-            {data.original_word_count} → {data.improved_word_count} words ({wordsDelta >= 0 ? "+" : ""}
+            {data.original_word_count} → {data.improved_word_count} words (
+            {wordsDelta >= 0 ? "+" : ""}
             {wordsDelta})
           </span>
         </div>

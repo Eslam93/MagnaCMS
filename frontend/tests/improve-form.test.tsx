@@ -61,9 +61,8 @@ let mutationState: {
 };
 
 vi.mock("@/lib/improver/hooks", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/improver/hooks")>(
-    "@/lib/improver/hooks",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/improver/hooks")>("@/lib/improver/hooks");
   return {
     ...actual,
     useImproveMutation: () => mutationState,

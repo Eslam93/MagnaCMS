@@ -53,9 +53,7 @@ export function ImagePanel({ contentId, disabled, className }: Props) {
 
   return (
     <section
-      className={
-        "space-y-4 rounded-lg border bg-card p-4 " + (className ?? "")
-      }
+      className={"space-y-4 rounded-lg border bg-card p-4 " + (className ?? "")}
       aria-label="Image"
       data-testid="image-panel"
     >
@@ -123,9 +121,7 @@ export function ImagePanel({ contentId, disabled, className }: Props) {
 
       {previousVersions.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Previous versions
-          </p>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Previous versions</p>
           <div className="flex gap-2 overflow-x-auto" data-testid="image-panel-history">
             {previousVersions.map((image) => (
               // eslint-disable-next-line @next/next/no-img-element

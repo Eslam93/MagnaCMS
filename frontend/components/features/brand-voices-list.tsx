@@ -27,8 +27,8 @@ export function BrandVoicesList() {
             {mode.kind === "create" ? "New brand voice" : `Edit ${mode.voice.name}`}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Define how this brand sounds. The generator will follow these rules when you select
-            this voice on the generate page.
+            Define how this brand sounds. The generator will follow these rules when you select this
+            voice on the generate page.
           </p>
         </header>
         <BrandVoiceForm

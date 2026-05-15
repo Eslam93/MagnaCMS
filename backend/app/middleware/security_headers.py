@@ -39,10 +39,7 @@ _SWAGGER_CSP: Final[str] = (
 # origin. Frontend assets are served from a different origin (Amplify),
 # so no `connect-src` widening is needed for the backend.
 _TIGHT_CSP: Final[str] = (
-    "default-src 'none'; "
-    "frame-ancestors 'none'; "
-    "base-uri 'none'; "
-    "form-action 'none'"
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 )
 
 # HSTS: 6 months, no preload, no subdomain inclusion until we own all
