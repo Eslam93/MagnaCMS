@@ -53,12 +53,15 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 # Per-path requests-per-minute caps. /auth/login + /auth/register are
 # the brief's explicit targets; /auth/refresh is added because the
 # security-review pass on P1.6 flagged the unauthenticated endpoint as
-# a token-space probing surface. P11.3 will swap this for a Redis-
-# backed sliding window with per-account dimensions.
+# a token-space probing surface. /content/generate gets a per-minute
+# cap that's the closest analog to the brief's 20/hour budget — the
+# real 20/hour sliding window arrives with Redis (P11.3). P11.3 will
+# also swap this whole dict for per-account dimensions.
 _AUTH_RATE_LIMITS: Final[dict[str, int]] = {
     "/api/v1/auth/login": 10,
     "/api/v1/auth/register": 10,
     "/api/v1/auth/refresh": 10,
+    "/api/v1/content/generate": 20,
 }
 
 
