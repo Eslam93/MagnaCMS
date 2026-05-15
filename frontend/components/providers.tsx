@@ -2,13 +2,15 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { Toaster } from "sonner";
 
 /**
  * Client-side providers wrapper.
  *
- * TanStack Query is the only provider for now — Zustand's auth store
- * doesn't need a provider (it's a global hook), and shadcn/ui's
- * theme provider lives in the root layout. Sentry wraps this in P2.10.
+ * TanStack Query for server state; sonner's Toaster for transient
+ * mutation feedback (Slice 4 introduces the "Content moved to trash —
+ * Undo" pattern). Zustand's auth store doesn't need a provider
+ * (it's a global hook). Sentry wraps this in P2.10.
  */
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -32,5 +34,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }),
   );
 
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      {children}
+      <Toaster position="bottom-right" richColors closeButton />
+    </QueryClientProvider>
+  );
 }
