@@ -173,15 +173,50 @@ cd frontend && pnpm playwright test
 
 ## 10. Deployment
 
-Infrastructure is defined in [`infra/`](./infra/) using AWS CDK. Single command:
+Infrastructure is defined in [`infra/`](./infra/) using AWS CDK in TypeScript. Five stacks compose linearly:
+
+| Stack | Owns |
+|---|---|
+| `magnacms-dev-network` | VPC + 2 AZs (public subnets only) + RDS/Redis security groups |
+| `magnacms-dev-data` | RDS Postgres, ElastiCache Serverless Redis, S3 images bucket, Secrets Manager (JWT + OpenAI key) |
+| `magnacms-dev-compute` | ECR repo, App Runner backend service, IAM roles, Fargate task definition for migrations |
+| `magnacms-dev-edge` | Amplify hosting app (CloudFront-for-images deferred to Phase 5; see [DEVLOG.md](./DEVLOG.md)) |
+| `magnacms-dev-observability` | CloudWatch log groups with 14-day retention |
+
+### First deploy (manual)
+
+See [`infra/DEPLOY.md`](./infra/DEPLOY.md) for the 11-step runbook. Highlights:
 
 ```bash
-cd infra && npm install && npx cdk deploy --all
+aws configure
+cd infra && npm ci
+npx cdk bootstrap aws://<account>/us-east-1
+npx cdk deploy --all -c env=dev
+# Paste OpenAI API key into Secrets Manager
+# Run migrations as one-off Fargate task
+# Smoke-test /api/v1/health
+# IP-identity preflight (DEPLOY.md step 8 — critical)
 ```
 
-CI/CD deploys automatically on push to `main` via `.github/workflows/deploy.yml`.
+### Subsequent deploys (automatic)
 
-Teardown: `npx cdk destroy --all` (plus separate Amplify app deletion).
+`.github/workflows/deploy.yml` is `workflow_dispatch`-only until the first manual deploy + IP-identity preflight pass. After that, flip the trigger to `on: push: main` for auto-deploy on backend changes. The workflow uses OIDC-assumed roles (no long-lived AWS keys in GitHub Secrets).
+
+### CI gates (no AWS touch)
+
+| Workflow | Triggers on | Runs |
+|---|---|---|
+| [`backend-ci`](./.github/workflows/backend-ci.yml) | `backend/**` changes | uv sync, ruff, mypy, alembic upgrade, pytest |
+| [`frontend-ci`](./.github/workflows/frontend-ci.yml) | `frontend/**` changes | pnpm install, lint, prettier, tsc, vitest, next build |
+| [`infra-ci`](./.github/workflows/infra-ci.yml) | `infra/**` changes | npm ci, jest snapshots, `cdk synth --all -c env=dev` |
+
+### Teardown
+
+```bash
+cd infra && npx cdk destroy --all -c env=dev
+# Plus delete the Amplify app manually from console (CDK has trouble with
+# Amplify apps connected to GitHub)
+```
 
 ## 11. Architecture decisions
 
