@@ -115,14 +115,46 @@ SUBNETS=$(aws ec2 describe-subnets \
             "Name=map-public-ip-on-launch,Values=true" \
   --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
 
+# The VPC's default security group has no egress rules (CDK locks it
+# down by default), so a Fargate task launched without an explicit
+# `securityGroups` field will fail to reach Secrets Manager and
+# bail with: "ResourceInitializationError: ... canceled, context
+# deadline exceeded". Pass the dedicated egress SG provisioned for
+# this purpose.
+SG_FARGATE=$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=magnacms-dev-fargate-egress" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
 aws ecs run-task \
   --cluster "$MIGRATION_CLUSTER" \
   --task-definition "$MIGRATION_TASK_DEF" \
   --launch-type FARGATE \
-  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],assignPublicIp=ENABLED}"
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG_FARGATE],assignPublicIp=ENABLED}"
 ```
 
-Watch for the task to reach STOPPED with exit code 0 in the ECS console. Logs are in the `/aws/ecs/...` log group.
+Watch for the task to reach STOPPED with exit code 0 in the ECS console. Logs are in the `magnacms-dev-compute-MigrationTaskmigrateLogGroup*` CloudWatch group.
+
+### 6a. (Optional) Seed demo data
+
+The same Fargate task definition runs `python -m app.scripts.seed`
+when the command is overridden, populating `demo@magnacms.dev /
+DemoPass123` plus a handful of content pieces (mock provider — no
+OpenAI cost). **Caveat:** the seed currently generates demo images
+to `/app/local_images` on the Fargate task's container filesystem,
+which is then thrown away. The image rows land in the DB but the
+PNG bytes never reach App Runner's container, so seeded thumbnails
+404. Until the S3 image-storage adapter ships, plan to demo live
+image generation from the UI instead of relying on seeded
+thumbnails.
+
+```bash
+aws ecs run-task \
+  --cluster "$MIGRATION_CLUSTER" \
+  --task-definition "$MIGRATION_TASK_DEF" \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG_FARGATE],assignPublicIp=ENABLED}" \
+  --overrides '{"containerOverrides":[{"name":"migrate","command":["python","-m","app.scripts.seed"]}]}'
+```
 
 ### 7. Smoke test `/health`
 
@@ -138,16 +170,33 @@ Expected: `{"status":"ok","version":"0.1.0","environment":"dev","dependencies":{
 
 ### 8. Update post-deploy env vars (App Runner + Amplify)
 
-The compute stack ships with placeholder values that need real URLs once EdgeStack is up. Two consoles to visit.
+Since PR #145 the App Runner env vars `CORS_ORIGINS` and
+`IMAGES_CDN_BASE_URL` are driven entirely by CDK context — do NOT
+edit them in the App Runner console. Editing the runtime config there
+desyncs from the CDK template and the next `cdk deploy` will overwrite
+your manual change. The only path is:
 
-**App Runner** → `magnacms-dev-backend` → Configuration → Environment variables:
+```bash
+cd infra
+npx cdk deploy magnacms-dev-compute --exclusively \
+  -c env=dev \
+  -c cors_origins=https://main.dew27gk9z09jh.amplifyapp.com \
+  -c images_cdn_base_url=https://grsv8u4uit.us-east-1.awsapprunner.com/local-images
+```
 
-1. Update `CORS_ORIGINS` to include `https://<branch>.<amplify-app-id>.amplifyapp.com`
-2. Leave `IMAGES_CDN_BASE_URL` empty until CloudFront-for-images lands in Phase 5
+App Runner force-redeploys when the CDK template changes the env vars.
 
-App Runner force-redeploys on env-var change.
+`IMAGES_CDN_BASE_URL` MUST be set — the old runbook said to leave it
+empty until CloudFront lands, but `LocalImageStorage` (still the
+current adapter; see `app/services/image_storage.py`) builds image
+URLs by concatenating this prefix with the storage key. An empty
+value produces relative `<img src>` paths that 404 from the Amplify
+origin. For the current demo, point it at the App Runner URL's
+`/local-images` static mount; swap it for the CloudFront distribution
+when that ships.
 
-**Amplify** → `magnacms-dev` → App settings → Environment variables:
+**Amplify** → `magnacms-dev` → App settings → Environment variables
+(this part IS console-driven because EdgeStack doesn't manage them):
 
 1. Add `NEXT_PUBLIC_API_BASE_URL` = `https://<apprunner-url>/api/v1`
 2. (Optional) `NEXT_PUBLIC_SENTRY_DSN` once you provision a Sentry project
