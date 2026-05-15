@@ -58,7 +58,7 @@ exports[`NetworkStack (dev) matches snapshot 1`] = `
         "SecurityGroupIngress": [
           {
             "CidrIp": "0.0.0.0/0",
-            "Description": "PostgreSQL — auth + SSL is the gate (no App Runner prefix list available)",
+            "Description": "PostgreSQL - auth + SSL is the gate (no App Runner prefix list available)",
             "FromPort": 5432,
             "IpProtocol": "tcp",
             "ToPort": 5432,

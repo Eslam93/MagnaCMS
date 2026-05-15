@@ -4,7 +4,7 @@ exports[`EdgeStack (dev) matches snapshot 1`] = `
 {
   "Outputs": {
     "AmplifyAppId": {
-      "Description": "Amplify app ID — connect GitHub via console post-deploy",
+      "Description": "Amplify app ID - connect GitHub via console post-deploy",
       "Export": {
         "Name": "test-edge-amplify-app-id",
       },
