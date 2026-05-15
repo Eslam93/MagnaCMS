@@ -2,7 +2,7 @@
 
 > **This file is the operating manual for the current Claude Code session and any successor sessions (compaction, dispatcher pattern, fresh context).** Read this top-to-bottom before editing code. When state changes (a slice merges, a deploy fact shifts, a known issue is resolved), update this file in the same commit.
 
-**Last updated:** 2026-05-15 (after Slice 4 merge — dashboard with list/detail/soft delete + undo).
+**Last updated:** 2026-05-15 (after Slice 3 merge — image generation, two providers, local-disk storage).
 
 ---
 
@@ -14,9 +14,10 @@
 | Slice 1 — Text gen, blog only, mock + OpenAI | ✅ shipped in [#135](https://github.com/Eslam93/MagnaCMS/pull/135), merged into main |
 | Slice 2 — Text gen widened (LinkedIn + email + ad copy) | ✅ shipped in [#137](https://github.com/Eslam93/MagnaCMS/pull/137), merged into main |
 | Slice 4 — Dashboard (list + detail + soft delete) | ✅ shipped in [#138](https://github.com/Eslam93/MagnaCMS/pull/138), merged into main |
-| Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded** |
+| Slice 3 — Image generation (gpt-image-1 + local storage) | ✅ shipped in [#139](https://github.com/Eslam93/MagnaCMS/pull/139), merged into main |
+| Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded**. Image S3 swap deferred to deploy batch. |
 | Deploy-time fixes (em-dash, NoDecode, migration env, Fargate SG) | em-dash + NoDecode: code in repo. Migration env + SG: documented in §4 as deploy-time TODOs (band-aided live, CDK code unchanged). |
-| Remaining slices | 3, 5, 6 (in that order — see §3 for rationale) |
+| Remaining slices | 5, 6 (in that order — see §3 for rationale) |
 | Time budget | **12 hours of local-first feature work, then 1-2h batch deploy + polish at the end of 24h.** |
 
 ### Live deploy snapshot (preserve — do NOT redeploy in this 12h window)
@@ -76,32 +77,7 @@ Order: **2 → 4 → 3 → 5 → 6**. Rationale: Slice 4 (dashboard) before Slic
 
 ### Slice 3 — Image generation
 
-**Branch:** `slice-3/image-gen`. **Budget:** ~2.5h. **Highest risk slice.**
-
-Done when:
-- [ ] Backend:
-  - `backend/app/prompts/image_prompt_builder.py` — per §7.5 of brief; runs as a separate OpenAI chat call AFTER content is generated. Output: `{ prompt, negative_prompt, style_summary }`.
-  - `backend/app/providers/image/openai_provider.py` — already stubbed; flesh out `OpenAIImageProvider` to call `gpt-image-1` and return bytes + cost.
-  - `backend/app/services/image_service.py` — orchestrates: load content piece → build image prompt (via LLM call) → generate image (via image provider) → upload bytes to S3 with UUID key → mark previous current=false → insert new `generated_images` row with `is_current=true` → return.
-  - `backend/app/repositories/image_repository.py` — `create`, `mark_others_not_current`, `list_for_content`.
-  - `POST /api/v1/content/:id/image` — body `{ style?, provider? }`. Returns `{ image }` with full `generated_images` row including `cdn_url`.
-  - `GET /api/v1/content/:id/images` — list all versions for a content piece.
-  - S3 upload: use `app.core.aws_secrets` infra OR a new `app/services/s3_service.py`. For Slice 3 local-first: write to local disk and serve via `GET /local-images/...` when `IMAGES_CDN_BASE_URL=http://localhost:8000/local-images` (already the default).
-  - For deployed mode: use `boto3` to put object into `s3_bucket_images`, generate a presigned URL (no CloudFront yet — that's Phase 5 per brief).
-- [ ] Frontend:
-  - Extend `frontend/types/api.d.ts` with `GeneratedImage` and image endpoints.
-  - On the `generate-result.tsx` panel: add a "Generate image" button (only enabled when `result_parse_status === 'ok'`).
-  - New `components/features/image-panel.tsx` — shows current image, style picker (six styles: photorealistic, illustration, minimalist, 3d_render, watercolor, cinematic), "Regenerate" button. Versions: simple flat thumbnail strip showing previous versions (no lightbox).
-- [ ] Tests:
-  - Backend: mock provider tests for image generation (existing `MockImageProvider` returns a placeholder PNG). Integration test: POST `/content/:id/image` → row inserted, `is_current=true`, old rows flipped.
-  - Frontend: vitest covering the image panel — generate button calls mutation, regenerate flips the displayed image.
-- [ ] DEVLOG; README §6 update; brief §17 cut-line note that CloudFront is still deferred.
-- [ ] PR title: `[Slice 3] Image generation: gpt-image-1 + S3 + regenerate`
-
-**Risk callouts:**
-- `gpt-image-1` returns base64 PNG by default — handle the encoding in the provider.
-- Local dev needs a path that doesn't require S3 — `IMAGES_CDN_BASE_URL=http://localhost:8000/local-images` + a local-file fallback. Document this in `.env.example`.
-- Cost: `gpt-image-1` at `medium` quality is ~$0.042/image. Multiply by demo count — set `OPENAI_IMAGE_QUALITY=low` by default for dev to keep bills sane.
+✅ **Shipped in [#139](https://github.com/Eslam93/MagnaCMS/pull/139).** `ImageService` orchestrates content lookup → LLM prompt build → image provider → `IImageStorage` upload → repo writes (mark-others-not-current + insert is_current=true) inside a single transaction; partial unique index `ix_generated_images_current_per_piece` enforces the invariant at the DB layer. New `LocalImageStorage` adapter writes to `backend/local_images/` and is served by a new `/local-images` StaticFiles mount; S3 adapter slot reserved for the deploy batch. Frontend `ImagePanel` reused in post-generate result AND dashboard detail dialog. Tests: 208 backend pass (4 new image-service unit) + 6 new integration locally skip; 19 frontend pass (+5 ImagePanel cases).
 
 ### Slice 5 — Improver
 
