@@ -4,6 +4,115 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Phase 2 in 12 PRs while away from the keyboard
+
+Phase 2 — AWS infrastructure, frontend scaffolding, and Sentry — landed in twelve sequential PRs ([#120](https://github.com/Eslam93/MagnaCMS/pull/120) through [#130](https://github.com/Eslam93/MagnaCMS/pull/130) plus this docs PR) over a few hours while I was away. The constraint was deliberate: **code only, no `cdk deploy`**. Every PR's gate is `cdk synth --all` on the infra side or `pnpm build` on the frontend, never an actual cloud touch. That keeps the AWS bill at zero until I'm back to babysit the first deployment.
+
+### What this entry covers
+
+- The five CDK stacks (Network, Data, Compute, Edge, Observability) and why they look the way they do
+- The frontend's three-PR split (scaffold → auth pages → protected layout)
+- The Sentry "wire it but leave it silent" posture
+- The handful of trade-offs that didn't make the brief but had to be made anyway
+
+### CDK app shape, and one decision the brief didn't anticipate
+
+The five stacks compose linearly: NetworkStack exports the VPC and security groups → DataStack consumes them, exports the bucket and secret ARNs → ComputeStack consumes those plus VPC, exports App Runner service ARN → EdgeStack runs in parallel (Amplify only) → ObservabilityStack runs in parallel (log groups only). Single `dev` environment for now; the `EnvConfig` shape in [`infra/lib/config.ts`](infra/lib/config.ts) is ready for `staging` and `prod` to slot in as one-line clones.
+
+The **trade-off the brief didn't anticipate**: `EdgeStack` was supposed to include CloudFront for the images S3 bucket, with Origin Access Control auto-attaching a bucket policy. The naive implementation creates a circular dependency:
+
+> `S3BucketOrigin.withOriginAccessControl(bucket)` writes a bucket policy to the *bucket's* stack (DataStack). That policy references the CloudFront distribution's ARN (EdgeStack). Meanwhile the CloudFront origin references the bucket (DataStack). CDK refuses to synth two stacks that need each other.
+
+Three ways out, none free:
+1. Move the bucket into a dedicated stack alongside the distribution
+2. Pre-create the OAC in DataStack with a wildcard-distribution bucket policy
+3. Use the legacy Origin Access Identity (OAI) pattern
+
+I picked **none of the above** for Phase 2 and shipped EdgeStack with Amplify only. CloudFront for images isn't load-bearing until Phase 5 (image generation) — until then, the images bucket already blocks all public access, and any S3 reads happen via App Runner's IAM role. Adding the CDN tier later is straightforward once we pick a fix; documenting the cycle in [edge-stack.ts](infra/lib/edge-stack.ts)'s header docstring means the next reader doesn't re-discover it.
+
+### The deploy workflow that doesn't deploy
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) is `workflow_dispatch`-only by design. Flipping it to `on: push: main` would auto-deploy every PR merge, but the deploy can't actually succeed until:
+
+1. Someone runs `aws configure` against a real account
+2. CDK bootstrap happens (`npx cdk bootstrap aws://ACCOUNT/us-east-1`)
+3. A placeholder backend image gets pushed to ECR (App Runner won't start without one)
+4. The OpenAI API key gets pasted into Secrets Manager
+5. The IP-identity preflight at [`infra/DEPLOY.md`](infra/DEPLOY.md) step 8 passes — this is the P1.10 follow-up that verifies rate-limit identity isn't broken by App Runner's load balancer
+
+Step 5 is the one that scared me into the manual-trigger posture. If `scope["client"]` in App Runner is the LB peer rather than the real client IP, every user shares one rate-limit bucket — first attempt of the day 429's everyone. The runbook documents the exact curl loop to verify it before going public.
+
+### Frontend in three PRs, in increasing trust
+
+[`P2.9a`](https://github.com/Eslam93/MagnaCMS/pull/127) is the Next.js 15 + Tailwind + shadcn/ui scaffold plus the auth store and API client plumbing — no real product pages, just a landing that links to /login and /register placeholders. [`P2.9b`](https://github.com/Eslam93/MagnaCMS/pull/128) adds those routes for real, with zod validation, react-hook-form, and the 401 interceptor that handles refresh-and-retry transparently. [`P2.9c`](https://github.com/Eslam93/MagnaCMS/pull/129) lifts the dashboard placeholder into a real protected shell with sidebar nav, top-right user menu, and a `/me`-driven dashboard page.
+
+The 401 interceptor is the one piece worth pulling out:
+
+```typescript
+// frontend/lib/api.ts (excerpted)
+async onResponse({ request, response }) {
+  if (response.status !== 401 || isAuthEndpoint(url)) return response;
+  if (!inflightRefresh) {
+    inflightRefresh = refreshAccessToken().finally(() => {
+      inflightRefresh = null;
+    });
+  }
+  const refreshed = await inflightRefresh;
+  if (!refreshed) return response;
+  // ... retry the original request with the new Bearer token
+}
+```
+
+Single-flight refresh: if three queries 401 simultaneously, they all wait on one `/auth/refresh` promise rather than firing three. That detail matters because P1.6 treats two valid refresh attempts on the same token as compromise — without the dedup, the second concurrent retry would have triggered the family-revocation path. The interceptor explicitly skips `/auth/refresh` / `/auth/login` / `/auth/register` / `/auth/logout` because 401s from those endpoints mean "credentials wrong," not "session expired."
+
+### typedRoutes, the small footgun
+
+Next.js 15's `experimental.typedRoutes: true` is the kind of feature that looks like a clean win until you try to ship in increments. It type-checks every `<Link href="/foo">` against the actual `app/` file tree. Beautiful for catching typos; brutal for "I want to show a placeholder link to a route that exists in tomorrow's PR." Three rounds of dance with this:
+
+- P2.9a's landing page links to `/login` and `/register`. typedRoutes off, with a comment.
+- P2.9b adds those routes. typedRoutes on. The auth hooks push to `/dashboard` after success, so a minimal `/dashboard` stub gets added in the same PR.
+- P2.9c moves the stub into `app/(protected)/dashboard/page.tsx` (route-group reorg) and adds five more stubs for the sidebar destinations (generate, improve, brand-voices, usage, settings) so typedRoutes doesn't reject the sidebar's links. Each stub is a four-line "Coming in Phase X" placeholder.
+
+The trade-off is clear in retrospect: typedRoutes pays for itself once the route graph is stable but creates churn during scaffolding. Worth it long-term.
+
+### Sentry wired silent
+
+Both `sentry-sdk[fastapi]` (backend) and `@sentry/nextjs` (frontend) are installed and initialized. Both are gated behind `if (dsn)` checks. With `SENTRY_DSN=""` and `NEXT_PUBLIC_SENTRY_DSN=""` (the defaults in [`.env.example`](.env.example)), neither does anything. Flip on later by setting the env var.
+
+This is the "wire the code path, leave the DSN empty" posture — the brief calls it out for the same reason: the app is going to be publicly live ~15+ days before P11 hardening lands, and flying blind on errors for that long is unacceptable. Even an unwired Sentry has the integration code right there; turning it on is one env var.
+
+Source-map upload, session replay, and PII scrubbing polish are deferred to P11.5.
+
+### Issue hygiene — a thing the project was bleeding
+
+Before starting Phase 2, twelve issues were OPEN on GitHub despite being merged: Phase 0's P-1.1 + P0.1 through P0.7, plus Phase 1's P1.6 through P1.9. Closed those with `gh issue close` and a "merged in #XYZ" comment. From Phase 2 onward, every PR auto-closes its issue via `Closes #N` in the PR body. The board now reflects reality.
+
+The `.private/PHASES.md` got one substantive update: P2.7's preflight bullet expanded to a full paragraph with the exact curl loop and the failure signature. If the rate-limit identity is broken behind App Runner's LB, that bullet is the only thing standing between "ship the public URL" and "every user shares one rate-limit bucket."
+
+### Where we are
+
+| Phase | Status |
+|---|---|
+| 0 — Bootstrap | ✅ |
+| 1 — Backend foundations (1.1 through 1.9 + two hardening rounds) | ✅ |
+| 1.10 — Pre-Phase-2 review-driven hardening (JWT validator, mock-mode gate, CI Postgres) | ✅ |
+| 1.11 — Phase-2-adjacent cleanups (middleware order, finish_reason strictness, etc.) | ✅ |
+| **2 — CDK + frontend + Sentry (this entry)** | ✅ |
+| 3 — Core content generation | 📋 next |
+
+CI is green across `backend-ci`, `frontend-ci`, and `infra-ci`. The first three workflows run on every PR. `deploy.yml` waits for me to flip its trigger after the first manual deploy.
+
+### What's next
+
+Phase 3 is where the product actually starts producing content. The four content-type prompts (blog, LinkedIn, ad copy, email), the three-stage JSON fallback, the prompt module infrastructure, the `POST /content/generate` endpoint, and the staged-loading UI on the frontend. P3.1 through P3.10 in the brief; I expect it to be the most fun phase yet because the work is finally about the thing the app does, not the thing it stands on.
+
+Two things to do before that:
+
+1. **Actually deploy.** The whole point of Phase 2's "code only" constraint is that the deploy is the gate to Phase 3 going live. Run [`DEPLOY.md`](infra/DEPLOY.md) end to end, verify the rate-limit preflight passes, flip `deploy.yml` to push-on-main, paste the URLs into the README's `## 1. Live demo` section.
+2. **The IP-identity preflight.** If it fails, the Phase 3 work happens behind a known-broken rate-limit until I add `TRUST_PROXY_XFF` parsing. Better to know on day one of the deployed life than day fifteen.
+
+---
+
 ## 2026-05-14 — Auth, then two passes of review-driven hardening
 
 Three more PRs landed in close succession: auth foundation, then two rounds of fixes against an external code review. ([#109](https://github.com/Eslam93/MagnaCMS/pull/109), [#110](https://github.com/Eslam93/MagnaCMS/pull/110), [#111](https://github.com/Eslam93/MagnaCMS/pull/111).) The interesting story isn't the auth code itself — register/login/me with bcrypt + JWT is well-trodden ground. The interesting story is what the review caught.
