@@ -12,6 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.providers.factory import reset_provider_cache
 from app.providers.llm.mock import MockLLMProvider
 
+# See test_content_dashboard module docstring for the reasoning. The
+# integration fixture wraps every request in one outer transaction;
+# Postgres `now()` is constant within a transaction, so the rows this
+# test creates all share an identical `created_at`. The tiebreaker
+# (`ORDER BY ... , id DESC`) decides the final order. Tests verify
+# the contract directly rather than chasing wall-clock distinctness.
+
 
 @pytest.fixture(autouse=True)
 def _force_mock_llm(monkeypatch):  # type: ignore[no-untyped-def]
@@ -103,7 +110,15 @@ async def test_list_returns_newest_first_with_previews(
     )
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert [item["id"] for item in data] == [second["id"], first["id"]]
+
+    ids = [item["id"] for item in data]
+    expected_ids = {first["id"], second["id"]}
+    assert set(ids) == expected_ids
+    # Ordering contract: created_at DESC then id DESC. The fixture's
+    # shared transaction collapses both rows' timestamps, so id DESC
+    # decides — see module docstring.
+    assert ids == sorted(expected_ids, reverse=True)
+
     for item in data:
         assert item["original_preview"]
         assert item["improved_preview"]

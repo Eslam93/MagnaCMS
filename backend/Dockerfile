@@ -45,6 +45,13 @@ COPY --from=builder --chown=app:app /app/app ./app
 COPY --chown=app:app alembic.ini ./
 COPY --chown=app:app alembic ./alembic
 
+# LocalImageStorage writes to /app/local_images at runtime. WORKDIR
+# /app is owned by root (755), so the non-root `app` user can't
+# create the subdir on first use — pre-create it and hand it over.
+# When the S3 image-storage adapter lands, this can go.
+RUN mkdir -p /app/local_images \
+ && chown app:app /app /app/local_images
+
 USER app
 
 EXPOSE 8000
