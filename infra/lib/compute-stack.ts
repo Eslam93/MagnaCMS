@@ -182,8 +182,17 @@ export class ComputeStack extends Stack {
               { name: "ENVIRONMENT", value: cfg.envName },
               { name: "AWS_REGION", value: cfg.region },
               { name: "AI_PROVIDER_MODE", value: "openai" },
-              { name: "USE_REDIS", value: "true" },
+              // USE_REDIS=false: ElastiCache lives in the VPC, App
+              // Runner here has no VPC connector, so Redis is
+              // unreachable. The backend has an in-memory fallback
+              // path; lights up once the VPC connector arrives (P11.x).
+              { name: "USE_REDIS", value: "false" },
               { name: "LOG_LEVEL", value: "INFO" },
+              // Cross-domain (*.amplifyapp.com → *.awsapprunner.com)
+              // requires SameSite=None on refresh cookies. Custom
+              // domains can flip this back to lax. P4.x will add
+              // Origin-header CSRF defense.
+              { name: "COOKIE_SAMESITE", value: "none" },
               {
                 name: "S3_BUCKET_IMAGES",
                 value: imagesBucket.bucketName,
@@ -257,7 +266,10 @@ export class ComputeStack extends Stack {
     );
     this.migrationTaskDefinition.addContainer("migrate", {
       image: ContainerImage.fromEcrRepository(this.ecrRepo, "latest"),
-      command: ["uv", "run", "alembic", "upgrade", "head"],
+      // The runtime image ships /opt/venv/bin on PATH but not `uv`
+      // itself (uv is in the builder stage only). Call alembic
+      // directly out of the venv.
+      command: ["alembic", "upgrade", "head"],
       logging: LogDriver.awsLogs({
         streamPrefix: "alembic",
         logRetention: cfg.logRetentionDays,

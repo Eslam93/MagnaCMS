@@ -266,8 +266,6 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
         "ContainerDefinitions": [
           {
             "Command": [
-              "uv",
-              "run",
               "alembic",
               "upgrade",
               "head",
@@ -549,11 +547,15 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 },
                 {
                   "Name": "USE_REDIS",
-                  "Value": "true",
+                  "Value": "false",
                 },
                 {
                   "Name": "LOG_LEVEL",
                   "Value": "INFO",
+                },
+                {
+                  "Name": "COOKIE_SAMESITE",
+                  "Value": "none",
                 },
                 {
                   "Name": "S3_BUCKET_IMAGES",

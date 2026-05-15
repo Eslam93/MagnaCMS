@@ -147,7 +147,17 @@ exports[`DataStack (dev) matches snapshot 1`] = `
             },
           ],
         },
-        "BucketName": "ai-content-images-dev",
+        "BucketName": {
+          "Fn::Join": [
+            "",
+            [
+              "ai-content-images-dev-",
+              {
+                "Ref": "AWS::AccountId",
+              },
+            ],
+          ],
+        },
         "LifecycleConfiguration": {
           "Rules": [
             {

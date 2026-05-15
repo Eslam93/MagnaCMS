@@ -47,21 +47,39 @@ describe("NetworkStack (dev)", () => {
   // SecurityGroupIngress properties — that lets it amend SGs in
   // downstream stacks without rewriting the parent. Assertions match.
 
-  it("RDS SG ingress includes Postgres port + App Runner prefix list", () => {
-    template.hasResourceProperties("AWS::EC2::SecurityGroupIngress", {
-      IpProtocol: "tcp",
-      FromPort: 5432,
-      ToPort: 5432,
-      SourcePrefixListId: "pl-0fb53b9774434e7e1", // us-east-1 App Runner
+  it("RDS SG ingress is open to 0.0.0.0/0 on 5432 (post-P2.11)", () => {
+    // App Runner has no stable egress prefix list to allowlist, so
+    // the SG can't narrow the source. Security is Postgres auth + SSL
+    // + Secrets-Manager-managed credentials.
+    //
+    // For CIDR-based ingress added at SG construction time, CDK
+    // inlines the rule into the SG's `SecurityGroupIngress` array
+    // rather than emitting a separate AWS::EC2::SecurityGroupIngress
+    // resource. (The separate-resource shape only appears for
+    // cross-stack SG references and prefix lists.)
+    template.hasResourceProperties("AWS::EC2::SecurityGroup", {
+      GroupDescription: "RDS Postgres: open SG, security via Postgres auth + SSL",
+      SecurityGroupIngress: [
+        {
+          CidrIp: "0.0.0.0/0",
+          IpProtocol: "tcp",
+          FromPort: 5432,
+          ToPort: 5432,
+        },
+      ],
     });
   });
 
-  it("Redis SG ingress includes Redis port + App Runner prefix list", () => {
-    template.hasResourceProperties("AWS::EC2::SecurityGroupIngress", {
-      IpProtocol: "tcp",
-      FromPort: 6379,
-      ToPort: 6379,
-      SourcePrefixListId: "pl-0fb53b9774434e7e1",
-    });
+  it("Redis SG has no ingress rules (VPC-internal only)", () => {
+    // ElastiCache stays VPC-internal; USE_REDIS=false until a VPC
+    // connector lands. Redis SG should have an empty ingress list
+    // (or no ingress key) and no separate ingress resource for 6379.
+    const ingressResources = template.findResources(
+      "AWS::EC2::SecurityGroupIngress",
+    );
+    const port6379 = Object.values(ingressResources).filter(
+      (r) => r.Properties?.FromPort === 6379,
+    );
+    expect(port6379).toHaveLength(0);
   });
 });

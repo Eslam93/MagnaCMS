@@ -116,8 +116,13 @@ export class DataStack extends Stack {
     this.redisCluster.addDependency(redisSubnetGroup);
 
     // --- S3 bucket for AI-generated images ---
+    // S3 bucket names are globally unique. Append the account ID so
+    // a generic prefix like "ai-content-images-dev" — which someone
+    // else might already own worldwide — never collides on first
+    // deploy. Multiple AWS accounts deploying this stack each get
+    // their own distinct bucket name.
     this.imagesBucket = new Bucket(this, "ImagesBucket", {
-      bucketName: `${cfg.imagesBucketBaseName}-${cfg.envName}`,
+      bucketName: `${cfg.imagesBucketBaseName}-${cfg.envName}-${this.account}`,
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
       encryption: BucketEncryption.S3_MANAGED,
       // Block direct ACL writes — bucket policy + CloudFront OAC is

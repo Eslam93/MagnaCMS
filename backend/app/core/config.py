@@ -17,7 +17,7 @@ import re
 from collections import Counter
 from enum import StrEnum
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BeforeValidator, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -186,10 +186,26 @@ class Settings(BaseSettings):
 
     # --- Database ---
     database_url: str = "postgresql+asyncpg://app:app@postgres:5432/app"
+    # When set, the after-validator below fetches the RDS-managed
+    # secret from AWS Secrets Manager and rebuilds `database_url`
+    # from the JSON credentials. Used by App Runner where the secret
+    # ARN is injected as an env var; local dev leaves it empty and
+    # uses the compose-default `database_url` above.
+    rds_secret_arn: str = ""
 
     # --- Redis ---
     use_redis: bool = True
     redis_url: str = "redis://redis:6379/0"
+
+    # --- Cookies ---
+    # Refresh-token cookie SameSite policy. `lax` is fine when frontend
+    # and API share a registrable domain (custom-domain prod or local
+    # dev). `none` is required when they live on different domains
+    # (e.g. *.amplifyapp.com + *.awsapprunner.com) — cross-site fetches
+    # to /auth/refresh won't carry a Lax cookie. App Runner sets
+    # COOKIE_SAMESITE=none in non-local envs; CSRF defenses (Origin
+    # check) follow once the frontend origin is registered (P4.x).
+    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
 
     # --- Auth ---
     jwt_secret: SecretStr = SecretStr("dev-only-REPLACE_ME_with_openssl_rand_hex_32")
@@ -207,6 +223,25 @@ class Settings(BaseSettings):
 
     # --- Observability ---
     sentry_dsn: str = ""
+
+    @model_validator(mode="after")
+    def _resolve_database_url_from_rds_secret(self) -> Settings:
+        """If `RDS_SECRET_ARN` is set, fetch the RDS-managed Secrets
+        Manager entry and rebuild `database_url` from its JSON fields.
+
+        Runs before the weak-secrets validator so the resolved DSN is
+        what downstream code sees. Local dev keeps the compose default
+        by leaving `RDS_SECRET_ARN` empty.
+
+        Boto3 errors at startup are intentionally fatal — a backend
+        that can't reach Secrets Manager can't serve traffic anyway.
+        """
+        if not self.rds_secret_arn:
+            return self
+        from app.core.aws_secrets import resolve_database_url_from_rds_secret
+
+        self.database_url = resolve_database_url_from_rds_secret(self.rds_secret_arn)
+        return self
 
     @model_validator(mode="after")
     def _reject_weak_secrets_outside_local(self) -> Settings:
