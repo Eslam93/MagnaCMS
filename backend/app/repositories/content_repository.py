@@ -48,12 +48,20 @@ class ContentRepository:
         are excluded — restoring lives on its own endpoint and reads will
         resurface them then.
 
-        `for_update=True` takes a row-level lock for the remainder of
-        the current transaction. Used by the image-regen pipeline to
-        serialize concurrent regenerations of the same piece — without
-        the lock, two parallel POSTs would both fire the upstream
-        image call (~$0.04 each at medium quality) before the partial
-        unique index rejected the second INSERT.
+        `for_update=True` takes a row-level lock with `NOWAIT`. Used
+        by the image-regen pipeline to detect "a regeneration is
+        already in flight for this piece" — without it, two parallel
+        POSTs would both fire the upstream image call (~$0.04 each
+        at medium quality) before the partial unique index rejected
+        the loser, AND each waiter would pin a DB connection for
+        ~10-20s while the winner ran external API calls.
+
+        With NOWAIT, a contending request fails immediately with
+        Postgres error 55P03 (`lock_not_available`); the service
+        catches that and surfaces it as a 409
+        `IMAGE_GENERATION_IN_PROGRESS` so the user sees a friendly
+        "already running" message and the connection is released at
+        once. A proper job-table dedupe lands in Phase 11.
         """
         stmt = select(ContentPiece).where(
             ContentPiece.id == content_id,
@@ -61,7 +69,7 @@ class ContentRepository:
             ContentPiece.deleted_at.is_(None),
         )
         if for_update:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update(nowait=True)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

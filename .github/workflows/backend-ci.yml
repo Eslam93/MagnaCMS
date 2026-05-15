@@ -67,3 +67,35 @@ jobs:
           else
             echo "no pyproject.toml yet — skipping lint/typecheck/test"
           fi
+
+      - name: Set up Node.js (for openapi-typescript drift check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate OpenAPI spec is consumable by openapi-typescript
+        # Catches the class of bugs where a Pydantic schema produces a
+        # spec openapi-typescript can't process (cyclic refs, unnamed
+        # unions, anyOf with no titles, etc.) — the frontend's typed
+        # client would silently lose type safety on those routes.
+        #
+        # We don't strict-diff against the committed `types/api.d.ts`
+        # yet because that file is still hand-stubbed; that swap is
+        # tracked in #50. This gate is the cheap pre-step: ensure the
+        # spec is generator-safe so the strict-diff job, when added,
+        # has a real baseline to compare against.
+        env:
+          # `app.main:app` boots the FastAPI app; we need ENVIRONMENT=local
+          # so the Settings validator doesn't require real secrets.
+          ENVIRONMENT: local
+          AI_PROVIDER_MODE: mock
+          ALLOW_MOCK_PROVIDER: "true"
+        run: |
+          if [ -f pyproject.toml ]; then
+            uv run python -c "import json; from app.main import app; \
+              json.dump(app.openapi(), open('/tmp/openapi.json', 'w'))"
+            npx --yes openapi-typescript@7.4 /tmp/openapi.json -o /tmp/api.d.ts
+            wc -l /tmp/api.d.ts
+          else
+            echo "no pyproject.toml yet — skipping openapi-typescript validation"
+          fi

@@ -32,11 +32,17 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.core.config import get_settings
 from app.core.request_context import get_request_id
 
-# Routes whose only auth signal is the refresh cookie. Everything else
-# under /api/v1/* uses Bearer auth from the in-memory access token and
-# is safe to leave un-guarded by Origin.
+# Cookie-borne auth state-change endpoints. Refresh/logout authenticate
+# via the cookie; login/register issue the cookie. A cross-site POST
+# that lands a victim's browser on the attacker's account (login CSRF)
+# is rare but real, so the same Origin policy applies. Everything
+# else under /api/v1/* uses Bearer auth from the in-memory access
+# token and is safe to leave un-guarded — browsers won't auto-attach
+# a Bearer header from an attacker origin.
 _PROTECTED_PATHS: Final[frozenset[str]] = frozenset(
     {
+        "/api/v1/auth/login",
+        "/api/v1/auth/register",
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
     }

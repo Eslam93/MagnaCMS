@@ -70,6 +70,20 @@ export interface ComputeStackProps extends StackProps {
   jwtSecret: Secret;
   openaiApiKeySecret: Secret;
   rdsInstance: DatabaseInstance;
+  /**
+   * CSV string of allowed CORS origins for the App Runner backend.
+   * Resolved from CDK context (`-c cors_origins=...`) in
+   * `bin/magnacms.ts`; the backend's `Settings` validator rejects
+   * `localhost` here in any non-local environment.
+   */
+  corsOrigins: string;
+  /**
+   * Scheme + host + path prefix the frontend uses for `<img src>` of
+   * generated images. Resolved from CDK context
+   * (`-c images_cdn_base_url=...`). Empty string is rejected — it
+   * would produce relative URLs that 404 from the Amplify origin.
+   */
+  imagesCdnBaseUrl: string;
 }
 
 export class ComputeStack extends Stack {
@@ -88,6 +102,8 @@ export class ComputeStack extends Stack {
       jwtSecret,
       openaiApiKeySecret,
       rdsInstance,
+      corsOrigins,
+      imagesCdnBaseUrl,
     } = props;
 
     // --- ECR repository ---
@@ -203,12 +219,18 @@ export class ComputeStack extends Stack {
                 name: "S3_BUCKET_IMAGES",
                 value: imagesBucket.bucketName,
               },
-              // CORS_ORIGINS gets populated post-deploy with the
-              // Amplify URL — see DEPLOY.md step "Update CORS_ORIGINS".
-              { name: "CORS_ORIGINS", value: "http://localhost:3000" },
-              // IMAGES_CDN_BASE_URL also updated post-deploy with the
-              // CloudFront URL from EdgeStack.
-              { name: "IMAGES_CDN_BASE_URL", value: "" },
+              // CORS_ORIGINS — supplied via CDK context
+              // (`-c cors_origins=...`); enforced by bin/magnacms.ts
+              // so a deploy without it fails synth. The backend's
+              // Settings validator rejects localhost values in
+              // non-local envs.
+              { name: "CORS_ORIGINS", value: corsOrigins },
+              // IMAGES_CDN_BASE_URL — supplied via CDK context
+              // (`-c images_cdn_base_url=...`); also enforced at
+              // synth time. Today this points at the App Runner URL
+              // + /local-images until the S3 + CloudFront adapter
+              // ships in Phase 5.
+              { name: "IMAGES_CDN_BASE_URL", value: imagesCdnBaseUrl },
               // RDS_SECRET_ARN must be a plain env var, NOT a secret
               // ref — the backend treats it as an ARN and looks up the
               // JSON itself via boto3 (see app/core/aws_secrets.py).

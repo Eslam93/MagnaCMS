@@ -36,6 +36,8 @@ describe("Full app synthesis (dev)", () => {
     jwtSecret: data.jwtSecret,
     openaiApiKeySecret: data.openaiApiKeySecret,
     rdsInstance: data.rdsInstance,
+    corsOrigins: "https://test-frontend.example.com",
+    imagesCdnBaseUrl: "https://test-frontend.example.com/local-images",
   });
   const edge = new EdgeStack(app, "magnacms-dev-edge", { env, cfg });
   const observability = new ObservabilityStack(

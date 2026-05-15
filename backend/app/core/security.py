@@ -42,15 +42,33 @@ class PasswordTooWeakError(ValueError):
     """Raised when a candidate password fails the strength check."""
 
 
-def validate_password_strength(password: str) -> None:
-    """Raise PasswordTooWeakError if the password is unacceptable."""
-    if len(password) < _PASSWORD_MIN_LENGTH:
-        raise PasswordTooWeakError(f"Password must be at least {_PASSWORD_MIN_LENGTH} characters.")
+def validate_bcrypt_password_bytes(password: str) -> None:
+    """Reject passwords whose UTF-8 encoding exceeds bcrypt's 72-byte limit.
+
+    bcrypt silently truncates inputs beyond 72 bytes, so two passwords
+    that differ only after byte 72 would otherwise compare equal. We
+    reject explicitly. Used by BOTH register (via the full strength
+    check below) AND login (byte guard only — old accounts created
+    before the strength rules tightened must still authenticate).
+    """
     if len(password.encode("utf-8")) > _PASSWORD_MAX_BYTES:
         raise PasswordTooWeakError(
             f"Password must be at most {_PASSWORD_MAX_BYTES} bytes when UTF-8 encoded "
             "(bcrypt silently truncates inputs longer than this)."
         )
+
+
+def validate_password_strength(password: str) -> None:
+    """Raise PasswordTooWeakError if the password is unacceptable.
+
+    Full check applied to registration. Login uses
+    `validate_bcrypt_password_bytes` only so the response stays
+    "invalid credentials" regardless of which legacy rule the stored
+    password violates.
+    """
+    if len(password) < _PASSWORD_MIN_LENGTH:
+        raise PasswordTooWeakError(f"Password must be at least {_PASSWORD_MIN_LENGTH} characters.")
+    validate_bcrypt_password_bytes(password)
     if not _PASSWORD_LETTER_RE.search(password):
         raise PasswordTooWeakError("Password must contain at least one letter.")
     if not _PASSWORD_DIGIT_RE.search(password):

@@ -13,7 +13,7 @@ A production-grade SaaS that helps marketers generate, manage, and improve marke
 | | |
 |---|---|
 | Backend API | <https://grsv8u4uit.us-east-1.awsapprunner.com> (health: `/api/v1/health`) |
-| API docs | <https://grsv8u4uit.us-east-1.awsapprunner.com/docs> (Swagger UI) |
+| API docs | <https://grsv8u4uit.us-east-1.awsapprunner.com/docs> (Swagger UI — exposed in `local` and `dev` envs only; `staging`/`production` hide `/docs`, `/redoc`, and `/openapi.json`) |
 | Frontend | _Coming up — Amplify zip awaiting one-click upload._ Until then, run locally and point it at the deployed API via `NEXT_PUBLIC_API_BASE_URL`. |
 | Demo credentials | `demo@magnacms.dev` / `DemoPass123` |
 
@@ -96,7 +96,7 @@ api.<domain>
   ▼
 App Runner — FastAPI containers (auto-scale, PUBLIC egress, no VPC connector)
   │
-  ├──→ RDS Postgres (strict SG, public endpoint with App-Runner-IP allowlist)
+  ├──→ RDS Postgres (public endpoint; SG open on 5432, gated by `rds.force_ssl=1` + strong auto-generated password — App Runner's egress prefix list isn't stable enough to allowlist)
   ├──→ ElastiCache Redis (rate limit, cache, idempotency, refresh-token blocklist)
   │       (today: in-memory fallback — USE_REDIS=false until Phase 11)
   ├──→ OpenAI API (gpt-5.4-mini text, gpt-image-1 image)
@@ -236,7 +236,7 @@ Detailed in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Headlines:
 
 - **OpenAI direct over AWS Bedrock** — one key covers text + image, no Anthropic use-case form, no Nova Canvas LEGACY/EOL story.
 - **No VPC connector on App Runner** — keeps AWS APIs and OpenAI reachable without NAT Gateway.
-- **Public RDS with strict SG** — explicit IP allowlist beats VPC complexity for the current scope.
+- **Public RDS, SG open on 5432, gated by TLS + strong password** — App Runner has no stable egress prefix list to allowlist, so security relies on `rds.force_ssl=1` + the auto-generated Secrets-Manager-managed password.
 - **Custom JWT over Cognito** — full control over refresh rotation + Redis blocklist; smaller IAM surface.
 - **Non-streaming content generation** — structured JSON outputs don't stream cleanly; staged loading UI gives the perceived-performance benefit without the bug surface.
 

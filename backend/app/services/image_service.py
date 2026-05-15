@@ -27,6 +27,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ProviderError, ValidationError
@@ -39,6 +40,10 @@ from app.providers.llm.base import ILLMProvider
 from app.repositories.content_repository import ContentRepository
 from app.repositories.image_repository import ImageRepository
 from app.services.image_storage import IImageStorage
+
+# Postgres SQLSTATE for `lock_not_available` — what NOWAIT returns
+# when a contending session already holds the row lock.
+_PG_LOCK_NOT_AVAILABLE = "55P03"
 
 log = get_logger(__name__)
 
@@ -102,16 +107,30 @@ class ImageService:
                 code="UNSUPPORTED_IMAGE_STYLE",
             )
 
-        # `for_update=True` serializes concurrent regenerations of the
-        # same piece. Without the lock, two POSTs would both fire the
-        # upstream image call before the partial unique index on
-        # `generated_images.is_current` rejected the second INSERT,
-        # wasting ~$0.04 per double-click at medium quality.
-        piece = await self._content_repo.get_for_user(
-            content_id,
-            user.id,
-            for_update=True,
-        )
+        # `for_update=True` uses `SELECT ... FOR UPDATE NOWAIT` so a
+        # contending request fails immediately rather than queuing
+        # behind ~10-20s of external API calls (which would pin a DB
+        # connection from a small asyncpg pool). The contender gets
+        # a 409 `IMAGE_GENERATION_IN_PROGRESS` and can retry once the
+        # winner's transaction commits.
+        try:
+            piece = await self._content_repo.get_for_user(
+                content_id,
+                user.id,
+                for_update=True,
+            )
+        except DBAPIError as exc:
+            if _is_lock_not_available(exc):
+                log.info(
+                    "image_regen_lock_contention",
+                    content_id=str(content_id),
+                    user_id=str(user.id),
+                )
+                raise ConflictError(
+                    "An image is already being generated for this content piece.",
+                    code="IMAGE_GENERATION_IN_PROGRESS",
+                ) from exc
+            raise
         if piece is None:
             raise NotFoundError("Content not found.", code="CONTENT_NOT_FOUND")
         if not piece.rendered_text or not piece.rendered_text.strip():
@@ -241,6 +260,17 @@ class ImageService:
         if model.startswith("nova-canvas"):
             return ImageProvider.NOVA_CANVAS
         return ImageProvider.OPENAI
+
+
+def _is_lock_not_available(exc: DBAPIError) -> bool:
+    """Detect Postgres SQLSTATE 55P03 raised by SELECT ... FOR UPDATE
+    NOWAIT when another session holds the row lock. asyncpg surfaces
+    the original error through SQLAlchemy's DBAPIError wrapper; the
+    code lives on the wrapped exception's `sqlstate` attribute.
+    """
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return sqlstate == _PG_LOCK_NOT_AVAILABLE
 
 
 def default_image_quality() -> ImageQuality:

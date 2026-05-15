@@ -26,8 +26,22 @@ This provisions the CDK toolkit stack (S3 bucket for assets, IAM roles) — requ
 
 Data must exist before the OpenAI secret can be populated, and the OpenAI secret must hold a real key before App Runner boots — the backend's config validator rejects the placeholder value in non-`local` environments. So Compute is split out into step 4.
 
+> **Required CDK context for any non-local deploy:** `cors_origins` and `images_cdn_base_url`. The backend's config validator rejects localhost values in non-local envs and the LocalImageStorage adapter returns broken URLs when the base is empty — `bin/magnacms.ts` will fail synth if either is absent unless `-c allow_synthetic_endpoints=true` is set (intended for the first bootstrap before the Amplify URL is known). For the first-bootstrap path you can pass an Amplify-shaped placeholder; once the real URL is known, redeploy with the real values:
+>
+> ```bash
+> # First bootstrap (no Amplify URL yet):
+> npx cdk deploy --all -c env=dev -c allow_synthetic_endpoints=true
+>
+> # After Amplify URL is known, redeploy Compute with the real values:
+> npx cdk deploy magnacms-dev-compute -c env=dev \
+>   -c cors_origins=https://main.dew27gk9z09jh.amplifyapp.com \
+>   -c images_cdn_base_url=https://grsv8u4uit.us-east-1.awsapprunner.com/local-images
+> ```
+
 ```bash
-npx cdk deploy magnacms-dev-network magnacms-dev-data -c env=dev
+npx cdk deploy magnacms-dev-network magnacms-dev-data -c env=dev \
+  -c cors_origins=https://main.dew27gk9z09jh.amplifyapp.com \
+  -c images_cdn_base_url=https://grsv8u4uit.us-east-1.awsapprunner.com/local-images
 ```
 
 ### 3. Populate the OpenAI API key
