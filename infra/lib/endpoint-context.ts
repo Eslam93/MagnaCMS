@@ -116,9 +116,25 @@ function validateOrigin(
         `or set '-c allow_synthetic_endpoints=true' to bootstrap.`,
     );
   }
-  // Strip a trailing slash so the App Runner env value matches what the
-  // backend stores in `Settings.cors_origins` after its own normalization.
-  return trimmed.replace(/\/+$/, "");
+  // CORS Origin headers from browsers are origin-only: scheme + host +
+  // optional non-default port, with no path/query/fragment. If the
+  // operator passes `https://app.example.com/foo`, the backend's
+  // allowlist will contain that value but the browser will send
+  // `https://app.example.com` and the CORS check will fail at runtime
+  // even though synth succeeded. Catch that here.
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    throw new Error(
+      `[CDK] cors_origins entry #${index + 1} ('${trimmed}') must be an ` +
+        `origin (scheme + host + optional port), not a URL with path, ` +
+        `query, or fragment. The browser's Origin header is origin-only, ` +
+        `so the allowlist would never match.`,
+    );
+  }
+  // Return `url.origin` rather than the trimmed input: it canonicalizes
+  // host case, elides default ports (`:443` → `""`), and strips any
+  // trailing slash. This is the exact byte sequence a compliant browser
+  // will send in the `Origin` header.
+  return url.origin;
 }
 
 function resolveCorsOrigins(input: EndpointContextInput): string {
@@ -180,13 +196,39 @@ function resolveImagesCdnBaseUrl(input: EndpointContextInput): string {
   return trimmed.replace(/\/+$/, "");
 }
 
+function corsHasInvalidHostname(corsOrigins: string): boolean {
+  return corsOrigins.split(",").some((entry) => {
+    try {
+      return isInvalidTld(new URL(entry).hostname);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function imagesHasInvalidHostname(url: string): boolean {
+  try {
+    return isInvalidTld(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function resolveEndpointContext(
   input: EndpointContextInput,
 ): ResolvedEndpoints {
   const corsOrigins = resolveCorsOrigins(input);
   const imagesCdnBaseUrl = resolveImagesCdnBaseUrl(input);
+  // Flag the synthetic state whenever either resolved value is a
+  // placeholder — whether the resolver filled it in itself OR the
+  // operator passed their own `.invalid` value through the escape
+  // hatch. Both cases produce a deploy that fails on the first real
+  // request, so the warning and CloudFormation tag in `bin/magnacms.ts`
+  // should fire either way.
   const syntheticEndpointsUsed =
     corsOrigins === SYNTHETIC_CORS_ORIGINS ||
-    imagesCdnBaseUrl === SYNTHETIC_IMAGES_CDN_BASE_URL;
+    imagesCdnBaseUrl === SYNTHETIC_IMAGES_CDN_BASE_URL ||
+    corsHasInvalidHostname(corsOrigins) ||
+    imagesHasInvalidHostname(imagesCdnBaseUrl);
   return { corsOrigins, imagesCdnBaseUrl, syntheticEndpointsUsed };
 }

@@ -174,6 +174,50 @@ describe("resolveEndpointContext — bad-shape values", () => {
       }),
     ).toThrow(/loopback host/);
   });
+
+  it("rejects a cors_origins entry with a non-root path", () => {
+    // Browser Origin header is origin-only; an allowlist containing
+    // `https://app.example.com/foo` would never match the actual
+    // `https://app.example.com` the browser sends.
+    expect(() =>
+      resolveEndpointContext({
+        corsOrigins: "https://app.example.com/foo",
+        imagesCdnBaseUrl: validImages,
+        allowSyntheticEndpoints: false,
+      }),
+    ).toThrow(/must be an origin/);
+  });
+
+  it("rejects a cors_origins entry with a query string", () => {
+    expect(() =>
+      resolveEndpointContext({
+        corsOrigins: "https://app.example.com?x=1",
+        imagesCdnBaseUrl: validImages,
+        allowSyntheticEndpoints: false,
+      }),
+    ).toThrow(/must be an origin/);
+  });
+
+  it("rejects a cors_origins entry with a fragment", () => {
+    expect(() =>
+      resolveEndpointContext({
+        corsOrigins: "https://app.example.com#frag",
+        imagesCdnBaseUrl: validImages,
+        allowSyntheticEndpoints: false,
+      }),
+    ).toThrow(/must be an origin/);
+  });
+
+  it("canonicalizes cors origins via url.origin (default port elided, case normalized)", () => {
+    const resolved = resolveEndpointContext({
+      // Mixed case host + explicit default https port + trailing slash.
+      // url.origin returns `https://app.example.com` for all three.
+      corsOrigins: "https://APP.example.com:443/",
+      imagesCdnBaseUrl: validImages,
+      allowSyntheticEndpoints: false,
+    });
+    expect(resolved.corsOrigins).toBe("https://app.example.com");
+  });
 });
 
 describe("resolveEndpointContext — .invalid TLD policy", () => {
@@ -197,7 +241,7 @@ describe("resolveEndpointContext — .invalid TLD policy", () => {
     ).toThrow(/'.invalid' TLD/);
   });
 
-  it("accepts .invalid values when the escape hatch is on (bootstrap mode)", () => {
+  it("accepts operator-supplied .invalid values when the escape hatch is on and flags them as synthetic", () => {
     const resolved = resolveEndpointContext({
       corsOrigins: "https://bootstrap.invalid",
       imagesCdnBaseUrl: "https://bootstrap.invalid/local-images",
@@ -207,10 +251,10 @@ describe("resolveEndpointContext — .invalid TLD policy", () => {
     expect(resolved.imagesCdnBaseUrl).toBe(
       "https://bootstrap.invalid/local-images",
     );
-    // Operator-supplied placeholders are still flagged as synthetic
-    // because they match the canonical synthetic values, exposing the
-    // CDK warning + stack tag downstream.
-    expect(resolved.syntheticEndpointsUsed).toBe(false);
+    // Operator-supplied `.invalid` values produce the same broken
+    // deploy as resolver-filled placeholders — the deployed app will
+    // reject every request — so the CDK warning + stack tag MUST fire.
+    expect(resolved.syntheticEndpointsUsed).toBe(true);
   });
 
   it("sets syntheticEndpointsUsed when the resolver itself filled in placeholders", () => {
@@ -221,5 +265,30 @@ describe("resolveEndpointContext — .invalid TLD policy", () => {
     });
     expect(resolved.corsOrigins).toBe(SYNTHETIC_CORS_ORIGINS);
     expect(resolved.syntheticEndpointsUsed).toBe(true);
+  });
+
+  it("flags syntheticEndpointsUsed when any CSV entry uses .invalid", () => {
+    const resolved = resolveEndpointContext({
+      // Mixed list: one real origin + one placeholder. The deploy is
+      // still going to break for the placeholder users, so the flag
+      // must fire on a mixed list too.
+      corsOrigins: `${validCors},https://bootstrap.invalid`,
+      imagesCdnBaseUrl: validImages,
+      allowSyntheticEndpoints: true,
+    });
+    expect(resolved.syntheticEndpointsUsed).toBe(true);
+  });
+
+  it("does NOT set syntheticEndpointsUsed when escape hatch is on but both values are real", () => {
+    // The flag is about "the resolved values are synthetic," not "the
+    // operator passed the escape-hatch flag." A deploy with real
+    // values + the escape hatch flipped on shouldn't trigger a
+    // bootstrap-mode warning.
+    const resolved = resolveEndpointContext({
+      corsOrigins: validCors,
+      imagesCdnBaseUrl: validImages,
+      allowSyntheticEndpoints: true,
+    });
+    expect(resolved.syntheticEndpointsUsed).toBe(false);
   });
 });

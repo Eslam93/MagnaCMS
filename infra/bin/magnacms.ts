@@ -88,16 +88,28 @@ const { corsOrigins, imagesCdnBaseUrl, syntheticEndpointsUsed } =
   resolveEndpointContext(resolverInput);
 
 if (syntheticEndpointsUsed) {
-  // Surface the placeholder state two ways: as an `Annotations.addWarning`
-  // (CDK prints these at the end of synth in yellow) and as a stack tag
-  // that lights up in the CloudFormation console. A deploy that ships
-  // synthetic endpoints will not produce a working app on the first
-  // request, so the operator must see this immediately.
-  cdk.Annotations.of(app).addWarning(
-    "[MagnaCMS] allow_synthetic_endpoints=true: CORS_ORIGINS and/or " +
-      "IMAGES_CDN_BASE_URL are populated from placeholder values. The " +
-      "deployed backend will reject browser requests until you redeploy " +
-      "with real CDK context. This mode is for first-bootstrap only.",
+  // Surface the placeholder state two ways:
+  //
+  //   1. console.warn → immediate, unmissable visibility at the cdk
+  //      synth/deploy command line. `Annotations.of(app).addWarning`
+  //      doesn't bubble up reliably from the App scope in CDK v2 (the
+  //      CLI walks Stack-scoped annotations only), so we print
+  //      directly to stderr instead. Using stderr (not stdout) keeps
+  //      `cdk synth | tee template.json` clean.
+  //   2. A `synthetic-endpoints=true` tag on every resource so the
+  //      placeholder state is visible from the CloudFormation console
+  //      long after the synth log has scrolled away.
+  //
+  // A deploy that ships synthetic endpoints will not produce a working
+  // app on the first request, so the operator must see this signal.
+  // eslint-disable-next-line no-console
+  console.warn(
+    "\n⚠️  [MagnaCMS] synthetic endpoints in effect.\n" +
+      "    CORS_ORIGINS and/or IMAGES_CDN_BASE_URL are populated from\n" +
+      "    placeholder values (either resolver-supplied or a `.invalid`\n" +
+      "    value passed through the escape hatch). The deployed backend\n" +
+      "    will reject browser requests until you redeploy with real\n" +
+      "    CDK context. This mode is for first-bootstrap only.\n",
   );
   cdk.Tags.of(app).add("synthetic-endpoints", "true");
 }
