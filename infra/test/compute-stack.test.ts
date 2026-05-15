@@ -35,8 +35,54 @@ describe("ComputeStack (dev)", () => {
     jwtSecret: data.jwtSecret,
     openaiApiKeySecret: data.openaiApiKeySecret,
     rdsInstance: data.rdsInstance,
+    corsOrigins: "https://test-frontend.example.com",
+    imagesCdnBaseUrl: "https://test-frontend.example.com/local-images",
   });
   const template = Template.fromStack(stack);
+
+  it("CORS_ORIGINS env value contains no localhost — the backend Settings validator would reject it in non-local envs", () => {
+    // Find the App Runner service and assert its RuntimeEnvironmentVariables
+    // CORS_ORIGINS entry is a real-shaped origin. This is the contract
+    // test that catches the regression where the CDK default localhost
+    // would brick App Runner at boot.
+    template.hasResourceProperties(
+      "AWS::AppRunner::Service",
+      Match.objectLike({
+        SourceConfiguration: Match.objectLike({
+          ImageRepository: Match.objectLike({
+            ImageConfiguration: Match.objectLike({
+              RuntimeEnvironmentVariables: Match.arrayWith([
+                Match.objectLike({
+                  Name: "CORS_ORIGINS",
+                  Value: Match.not(Match.stringLikeRegexp(".*localhost.*")),
+                }),
+              ]),
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("IMAGES_CDN_BASE_URL env value is non-empty — empty would render relative URLs that 404 from the frontend origin", () => {
+    template.hasResourceProperties(
+      "AWS::AppRunner::Service",
+      Match.objectLike({
+        SourceConfiguration: Match.objectLike({
+          ImageRepository: Match.objectLike({
+            ImageConfiguration: Match.objectLike({
+              RuntimeEnvironmentVariables: Match.arrayWith([
+                Match.objectLike({
+                  Name: "IMAGES_CDN_BASE_URL",
+                  Value: Match.stringLikeRegexp(".+"),
+                }),
+              ]),
+            }),
+          }),
+        }),
+      }),
+    );
+  });
 
   it("matches snapshot", () => {
     expect(template.toJSON()).toMatchSnapshot();

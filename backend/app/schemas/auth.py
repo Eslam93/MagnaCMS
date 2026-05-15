@@ -5,18 +5,61 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from app.core.security import (
+    PasswordTooWeakError,
+    validate_bcrypt_password_bytes,
+    validate_password_strength,
+)
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    # `max_length=72` matches bcrypt's silent-truncation boundary. The
+    # frontend Zod schema enforces the same UTF-8 byte limit; the
+    # `field_validator` below catches multi-byte characters that fit
+    # in 72 code points but not 72 bytes, plus the letter/digit rule.
+    password: str = Field(
+        min_length=8,
+        max_length=72,
+        description=(
+            "8-72 characters and at most 72 UTF-8 bytes. Must contain at "
+            "least one letter and one digit."
+        ),
+    )
     full_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("password")
+    @classmethod
+    def _enforce_strength(cls, value: str) -> str:
+        # Delegate to the canonical implementation in `core/security`.
+        # The auth router maps the surfaced ValidationError to the
+        # WEAK_PASSWORD application error code; here we only need
+        # Pydantic to fail with a useful message.
+        try:
+            validate_password_strength(value)
+        except PasswordTooWeakError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
+    # Login keeps a lenient max-128 so users who registered before the
+    # strength tightening can still authenticate. The 72-byte cap is
+    # still enforced via the `field_validator` so bcrypt's silent
+    # truncation never lets the wrong password through.
     password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def _enforce_bcrypt_bytes(cls, value: str) -> str:
+        try:
+            validate_bcrypt_password_bytes(value)
+        except PasswordTooWeakError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
 
 
 class UserResponse(BaseModel):

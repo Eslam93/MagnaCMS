@@ -28,14 +28,25 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def get_engine() -> AsyncEngine:
-    """Return the process-wide async engine, creating it on first call."""
+    """Return the process-wide async engine, creating it on first call.
+
+    Pool sizing aims to cover the App Runner instance's default
+    MaxConcurrency=100 without forcing every request to queue on the
+    DB. `pool_size=15, max_overflow=20` → 35 max concurrent
+    connections per instance. Image generation no longer holds a
+    connection across upstream calls (see `image_service` + the
+    `NOWAIT` lock in `ContentRepository.get_for_user`), so 35 is
+    comfortable headroom — and RDS `db.t4g.micro` defaults to
+    `max_connections ≈ 87`, so a min=1/max=3 App Runner fleet still
+    leaves room for psql sessions + migrations.
+    """
     global _engine
     if _engine is None:
         settings = get_settings()
         _engine = create_async_engine(
             settings.database_url,
-            pool_size=5,
-            max_overflow=10,
+            pool_size=15,
+            max_overflow=20,
             pool_pre_ping=True,
             pool_recycle=3600,
             future=True,

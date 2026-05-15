@@ -46,9 +46,18 @@ jobs:
         # bootstrap with no stacks yet; P2.2 lands NetworkStack, after
         # which synth runs on every PR. The guard auto-removes itself
         # once any *-stack.ts file exists in lib/.
+        #
+        # Context: `cors_origins` and `images_cdn_base_url` are
+        # required for non-local deploys (see bin/magnacms.ts). CI
+        # synths use placeholder values so the synth path exercises
+        # the same code as a real deploy. A real deploy MUST pass
+        # the production values (see infra/DEPLOY.md §2).
         run: |
           if ls lib/*-stack.ts >/dev/null 2>&1; then
-            npx cdk synth --all -c env=dev
+            npx cdk synth --all \
+              -c env=dev \
+              -c cors_origins=https://ci.example.com \
+              -c images_cdn_base_url=https://ci.example.com/local-images
           else
             echo "No stacks defined yet — skipping cdk synth. Next PR (P2.2) wires NetworkStack."
           fi

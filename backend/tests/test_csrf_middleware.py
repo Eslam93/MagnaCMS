@@ -1,8 +1,9 @@
 """Tests for the Origin-based CSRF guard.
 
-The middleware protects cookie-only POST endpoints from cross-origin
-requests when the refresh cookie is `SameSite=none`. Bearer-authed
-endpoints (everything else under /api/v1/*) are intentionally skipped.
+The middleware protects cookie-borne auth state-change endpoints
+(login, register, refresh, logout) from cross-origin POSTs when the
+refresh cookie is `SameSite=none`. Bearer-authed endpoints
+(everything else under /api/v1/*) are intentionally skipped.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.middleware.request_id import REQUEST_ID_HEADER
 
 
 @pytest.mark.asyncio
@@ -97,3 +99,63 @@ async def test_unprotected_endpoint_with_disallowed_origin_passes() -> None:
             headers={"origin": "https://evil.example.com"},
         )
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/auth/login",
+        "/api/v1/auth/register",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+    ],
+)
+async def test_every_protected_path_rejects_cross_origin(path: str) -> None:
+    """Login + register were added in round 2 — they issue the refresh
+    cookie, so the same Origin policy must apply to them as to refresh/
+    logout. A cross-origin POST should never be able to land a victim
+    on the attacker's account (login CSRF)."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            path,
+            headers={
+                "origin": "https://evil.example.com",
+                "sec-fetch-site": "cross-site",
+            },
+            # Provide a valid-looking body so 422 schema-validation
+            # doesn't beat us to the 403 — though CSRF should fire
+            # first regardless.
+            json={"email": "anyone@example.com", "password": "Hunter2x"},
+        )
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "CSRF_ORIGIN_REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_csrf_403_carries_request_id_header_and_envelope_field() -> None:
+    """The CSRF middleware was moved INSIDE RequestID so 403 responses
+    pick up the bound contextvar in `meta.request_id` AND the
+    `X-Request-ID` response header. Before the reorder these were
+    null/absent and observability suffered."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/refresh",
+            headers={
+                "origin": "https://evil.example.com",
+                "sec-fetch-site": "cross-site",
+            },
+        )
+    assert response.status_code == 403
+    # Header is present and non-empty.
+    rid_header = response.headers.get(REQUEST_ID_HEADER)
+    assert rid_header
+    # Envelope `meta.request_id` matches the header.
+    body = response.json()
+    assert body["meta"]["request_id"] == rid_header

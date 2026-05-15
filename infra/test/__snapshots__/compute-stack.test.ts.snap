@@ -615,11 +615,11 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 },
                 {
                   "Name": "CORS_ORIGINS",
-                  "Value": "http://localhost:3000",
+                  "Value": "https://test-frontend.example.com",
                 },
                 {
                   "Name": "IMAGES_CDN_BASE_URL",
-                  "Value": "",
+                  "Value": "https://test-frontend.example.com/local-images",
                 },
                 {
                   "Name": "RDS_SECRET_ARN",

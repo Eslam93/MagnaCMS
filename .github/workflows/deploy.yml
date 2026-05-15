@@ -101,9 +101,13 @@ jobs:
           # arm64 images that App Runner can't pull.
           aws ecr get-login-password --region us-east-1 \
             | docker login --username AWS --password-stdin "${{ steps.resolve.outputs.ecr_uri }}"
+          # `--load` is shorthand for `--output=type=docker` (single-
+          # platform, push to local daemon). Specifying it alongside
+          # an explicit `--output` triggered buildx's "multiple
+          # outputs not supported" error — the previous form here
+          # would have failed at build time.
           docker buildx build --platform linux/amd64 \
                        --provenance=false \
-                       --output=type=image,push=false \
                        -t "${{ steps.resolve.outputs.ecr_uri }}:${GITHUB_SHA}" \
                        -t "${{ steps.resolve.outputs.ecr_uri }}:latest" \
                        --load \

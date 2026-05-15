@@ -11,20 +11,28 @@ below reads outer-to-inner along the request path:
                                     every response on its way out,
                                     INCLUDING 429s emitted by RateLimit.
   3. RequestID                    — binds `X-Request-ID` into the contextvar
-                                    before RateLimit reads it for the
-                                    429 envelope.
-  4. RateLimit                    — rejects 429 before the request reaches
+                                    before RateLimit (or CSRF) reads it
+                                    for an early-return envelope, and
+                                    wraps `send` to inject the response
+                                    header on every response — including
+                                    those short-circuited by CSRF/RateLimit.
+  4. CSRF (Origin guard)          — runs INSIDE RequestID so its 403
+                                    envelope carries `request_id` and
+                                    its response gains the X-Request-ID
+                                    header. Protects cookie-borne auth
+                                    state-change endpoints only.
+  5. RateLimit                    — rejects 429 before the request reaches
                                     auth code; bound IP is the real TCP
                                     peer (forwarded-for is unsafe as
                                     rate-limit identity until P11.x).
                                     Position INSIDE SecurityHeaders +
                                     RequestID so 429 responses carry both.
-  5. AccessLog (first added, innermost) — reads the bound request_id from
+  6. AccessLog (first added, innermost) — reads the bound request_id from
      the contextvar so every log line carries it.
-  6. Exception handlers           — consistent {error, meta} envelope on
+  7. Exception handlers           — consistent {error, meta} envelope on
                                     every failure path; runs inside the
                                     middleware stack.
-  7. v1 router                    — mounted at /api/v1.
+  8. v1 router                    — mounted at /api/v1.
 """
 
 from __future__ import annotations
@@ -149,13 +157,16 @@ def create_app() -> FastAPI:
         rules=_AUTH_RATE_LIMITS,
         patterns=_RATE_LIMIT_PATTERNS,
     )
+    # CSRF guard added BEFORE RequestID so it ends up inside RequestID
+    # in Starlette's outer-to-inner stack: RequestID sees the request
+    # first, binds the contextvar + wraps `send`, then delegates to
+    # CSRF. When CSRF short-circuits with a 403, the envelope picks up
+    # the bound `request_id` and the response gains X-Request-ID on
+    # the way back out through RequestID's send-wrapper.
+    app.add_middleware(CsrfOriginMiddleware)
     app.add_middleware(
         RequestIDMiddleware
-    )  # binds contextvar so RateLimit's 429 envelope carries it
-    # CSRF guard sits INSIDE CORS (so preflights still short-circuit) and
-    # OUTSIDE rate-limit (so a rejected origin doesn't consume a slot).
-    # Protects /auth/refresh + /auth/logout — the cookie-only endpoints.
-    app.add_middleware(CsrfOriginMiddleware)
+    )  # binds contextvar + adds X-Request-ID header to every response
     app.add_middleware(SecurityHeadersMiddleware)  # wraps RateLimit so 429 carries security headers
     app.add_middleware(
         CORSMiddleware,  # outermost — preflights short-circuit before anything else
