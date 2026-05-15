@@ -47,6 +47,7 @@ export const generateSchema = z.object({
     .max(500, "Audience must be 500 characters or fewer")
     .optional()
     .or(z.literal("")),
+  brand_voice_id: z.string().uuid().optional().or(z.literal("")),
 });
 
 export type GenerateInput = z.infer<typeof generateSchema>;

@@ -54,6 +54,15 @@ export interface paths {
     get: operations["getImprovement"];
     delete: operations["deleteImprovement"];
   };
+  "/brand-voices": {
+    get: operations["listBrandVoices"];
+    post: operations["createBrandVoice"];
+  };
+  "/brand-voices/{voice_id}": {
+    get: operations["getBrandVoice"];
+    patch: operations["updateBrandVoice"];
+    delete: operations["deleteBrandVoice"];
+  };
   "/health": {
     get: operations["health"];
   };
@@ -296,6 +305,39 @@ export interface components {
     };
     ImprovementListResponse: {
       data: components["schemas"]["ImprovementListItem"][];
+    };
+
+    // ── Brand voices (Slice 6) ───────────────────────────────────
+    BrandVoiceResponse: {
+      id: string;
+      name: string;
+      description: string | null;
+      tone_descriptors: string[];
+      banned_words: string[];
+      sample_text: string | null;
+      target_audience: string | null;
+      created_at: string;
+      updated_at: string;
+      deleted_at: string | null;
+    };
+    BrandVoiceListResponse: {
+      data: components["schemas"]["BrandVoiceResponse"][];
+    };
+    BrandVoiceCreate: {
+      name: string;
+      description?: string | null;
+      tone_descriptors?: string[];
+      banned_words?: string[];
+      sample_text?: string | null;
+      target_audience?: string | null;
+    };
+    BrandVoiceUpdate: {
+      name?: string;
+      description?: string | null;
+      tone_descriptors?: string[];
+      banned_words?: string[];
+      sample_text?: string | null;
+      target_audience?: string | null;
     };
   };
 }
@@ -635,6 +677,120 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ImprovementResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  listBrandVoices: {
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["BrandVoiceListResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  createBrandVoice: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BrandVoiceCreate"];
+      };
+    };
+    responses: {
+      201: {
+        content: {
+          "application/json": components["schemas"]["BrandVoiceResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      422: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  getBrandVoice: {
+    parameters: {
+      path: { voice_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["BrandVoiceResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  updateBrandVoice: {
+    parameters: {
+      path: { voice_id: string };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BrandVoiceUpdate"];
+      };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["BrandVoiceResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      422: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  deleteBrandVoice: {
+    parameters: {
+      path: { voice_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["BrandVoiceResponse"];
         };
       };
       401: {

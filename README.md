@@ -108,13 +108,13 @@ Once deployed, the OpenAPI 3.1 spec is auto-published:
 | Content | `POST /content/generate` (blog post, LinkedIn post, email, ad copy), `GET /content`, `GET /content/:id`, `DELETE /content/:id` (soft delete), `POST /content/:id/restore` (24-hour window) |
 | Images | `POST /content/:id/image` (generate or regenerate), `GET /content/:id/images` (every version, newest first) |
 | Improver | `POST /improve` (analyze → rewrite), `GET /improvements`, `GET /improvements/:id`, `DELETE /improvements/:id` |
+| Brand voices | `GET /brand-voices`, `POST /brand-voices`, `GET /brand-voices/:id`, `PATCH /brand-voices/:id`, `DELETE /brand-voices/:id` |
 | System | `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /redoc` |
 
 ### Planned
 
 | Group | Endpoints |
 |---|---|
-| Brand voices | full CRUD at `/brand-voices` |
 | Usage | `GET /usage/summary` |
 | Exports | `GET /content/:id/export?format=pdf\|docx\|markdown` |
 
