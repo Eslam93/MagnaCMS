@@ -44,6 +44,16 @@ export interface paths {
   "/content/{content_id}/images": {
     get: operations["listImages"];
   };
+  "/improve": {
+    post: operations["improveText"];
+  };
+  "/improvements": {
+    get: operations["listImprovements"];
+  };
+  "/improvements/{improvement_id}": {
+    get: operations["getImprovement"];
+    delete: operations["deleteImprovement"];
+  };
   "/health": {
     get: operations["health"];
   };
@@ -238,6 +248,54 @@ export interface components {
     };
     ImageListResponse: {
       data: components["schemas"]["GeneratedImage"][];
+    };
+
+    // ── Improver (Slice 5) ───────────────────────────────────────
+    ImprovementGoal:
+      | "shorter"
+      | "persuasive"
+      | "formal"
+      | "seo"
+      | "audience_rewrite";
+    ImprovementChangesSummary: {
+      tone_shift: string;
+      length_change_pct: number;
+      key_additions: string[];
+      key_removals: string[];
+    };
+    ImproveRequest: {
+      original_text: string;
+      goal: components["schemas"]["ImprovementGoal"];
+      new_audience?: string | null;
+    };
+    ImprovementResponse: {
+      id: string;
+      original_text: string;
+      improved_text: string;
+      goal: components["schemas"]["ImprovementGoal"];
+      new_audience: string | null;
+      explanation: string[];
+      changes_summary: components["schemas"]["ImprovementChangesSummary"];
+      original_word_count: number;
+      improved_word_count: number;
+      model_id: string;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: string;
+      created_at: string;
+      deleted_at: string | null;
+    };
+    ImprovementListItem: {
+      id: string;
+      goal: components["schemas"]["ImprovementGoal"];
+      original_preview: string;
+      improved_preview: string;
+      original_word_count: number;
+      improved_word_count: number;
+      created_at: string;
+    };
+    ImprovementListResponse: {
+      data: components["schemas"]["ImprovementListItem"][];
     };
   };
 }
@@ -495,6 +553,88 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ImageListResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  improveText: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ImproveRequest"];
+      };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ImprovementResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      422: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  listImprovements: {
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ImprovementListResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  getImprovement: {
+    parameters: {
+      path: { improvement_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ImprovementResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["ErrorEnvelope"];
+        };
+      };
+    };
+  };
+  deleteImprovement: {
+    parameters: {
+      path: { improvement_id: string };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ImprovementResponse"];
         };
       };
       401: {
