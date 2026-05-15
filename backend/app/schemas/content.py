@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.db.enums import ContentType, ResultParseStatus
 
@@ -123,13 +123,33 @@ class AdCopyResult(BaseModel):
 
     Mirrors §7.3 of PROJECT_BRIEF.md. Three variants, one per format
     (short / medium / long). The service-layer corrective retry catches
-    the case where the model returned two or four — `model_validate`
-    enforces the count via `min_length`/`max_length`.
+    the case where the model returned two or four — `min_length` /
+    `max_length` enforces the count, and the after-validator enforces
+    "one of each format" so a model that returns `[short, short, short]`
+    doesn't silently render only the short block (the renderer keys on
+    format and would drop two duplicates).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     variants: Annotated[list[AdCopyVariant], Field(min_length=3, max_length=3)]
+
+    @model_validator(mode="after")
+    def _variants_cover_every_format(self) -> AdCopyResult:
+        formats = {variant.format for variant in self.variants}
+        if formats != {"short", "medium", "long"}:
+            missing = {"short", "medium", "long"} - formats
+            extra = formats - {"short", "medium", "long"}
+            details = []
+            if missing:
+                details.append(f"missing={sorted(missing)}")
+            if extra:
+                details.append(f"unexpected={sorted(extra)}")
+            raise ValueError(
+                "ad_copy must contain exactly one variant per format "
+                "(short, medium, long); " + ", ".join(details)
+            )
+        return self
 
 
 # Union of every per-type result. Order matters in some Pydantic versions

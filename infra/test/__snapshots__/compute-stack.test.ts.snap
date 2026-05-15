@@ -280,6 +280,14 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 "Value": "us-east-1",
               },
               {
+                "Name": "AI_PROVIDER_MODE",
+                "Value": "openai",
+              },
+              {
+                "Name": "CORS_ORIGINS",
+                "Value": "https://migration-task.invalid",
+              },
+              {
                 "Name": "RDS_SECRET_ARN",
                 "Value": {
                   "Fn::ImportValue": "test-data:ExportsOutputRefPostgresSecretAttachment75CD6F6F9ED7447B",
@@ -347,6 +355,20 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
               },
             },
             "Name": "migrate",
+            "Secrets": [
+              {
+                "Name": "JWT_SECRET",
+                "ValueFrom": {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefJwtSecretB8834B392B9A9162",
+                },
+              },
+              {
+                "Name": "OPENAI_API_KEY",
+                "ValueFrom": {
+                  "Fn::ImportValue": "test-data:ExportsOutputRefOpenaiApiKeySecret330F502FA86B3F79",
+                },
+              },
+            ],
           },
         ],
         "Cpu": "256",
@@ -424,6 +446,26 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
                 ],
               },
             },
+            {
+              "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::ImportValue": "test-data:ExportsOutputRefJwtSecretB8834B392B9A9162",
+              },
+            },
+            {
+              "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::ImportValue": "test-data:ExportsOutputRefOpenaiApiKeySecret330F502FA86B3F79",
+              },
+            },
           ],
           "Version": "2012-10-17",
         },
@@ -498,14 +540,14 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
           "UnhealthyThreshold": 5,
         },
         "InstanceConfiguration": {
-          "Cpu": "0.25 vCPU",
+          "Cpu": "1 vCPU",
           "InstanceRoleArn": {
             "Fn::GetAtt": [
               "AppRunnerInstanceRole96A5A063",
               "Arn",
             ],
           },
-          "Memory": "0.5 GB",
+          "Memory": "2 GB",
         },
         "NetworkConfiguration": {
           "EgressConfiguration": {

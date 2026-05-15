@@ -48,7 +48,6 @@ import {
   SubnetType,
   type Vpc,
 } from "aws-cdk-lib/aws-ec2";
-import { CfnServerlessCache, CfnSubnetGroup } from "aws-cdk-lib/aws-elasticache";
 import {
   Credentials,
   DatabaseInstance,
@@ -66,12 +65,16 @@ export interface DataStackProps extends StackProps {
   cfg: EnvConfig;
   vpc: Vpc;
   sgRds: SecurityGroup;
-  sgRedis: SecurityGroup;
+  // Note: sgRedis was previously consumed here to attach to the
+  // ElastiCache cluster. The Redis cluster has been removed (see
+  // commit-log) — the backend runs with USE_REDIS=false and pays
+  // for nothing it doesn't use. `sgRedis` still exists in
+  // NetworkStack so the VPC-connector + Redis revival path is
+  // unchanged when Phase 11 lights it up.
 }
 
 export class DataStack extends Stack {
   public readonly rdsInstance: DatabaseInstance;
-  public readonly redisCluster: CfnServerlessCache;
   public readonly imagesBucket: Bucket;
   public readonly jwtSecret: Secret;
   public readonly openaiApiKeySecret: Secret;
@@ -79,7 +82,7 @@ export class DataStack extends Stack {
   constructor(scope: Construct, id: string, props: DataStackProps) {
     super(scope, id, props);
 
-    const { cfg, vpc, sgRds, sgRedis } = props;
+    const { cfg, vpc, sgRds } = props;
 
     // --- RDS Postgres ---
     // Parameter group forcing TLS on every connection. The RDS SG is
@@ -122,22 +125,13 @@ export class DataStack extends Stack {
       deletionProtection: cfg.envName !== "dev",
     });
 
-    // --- ElastiCache Serverless Redis ---
-    const redisSubnetGroup = new CfnSubnetGroup(this, "RedisSubnetGroup", {
-      description: `Redis subnet group for ${cfg.envName}`,
-      subnetIds: vpc.publicSubnets.map((s) => s.subnetId),
-      cacheSubnetGroupName: `magnacms-${cfg.envName}-redis-subnets`,
-    });
-    this.redisCluster = new CfnServerlessCache(this, "Redis", {
-      engine: "redis",
-      serverlessCacheName: `magnacms-${cfg.envName}-redis`,
-      subnetIds: vpc.publicSubnets.map((s) => s.subnetId),
-      securityGroupIds: [sgRedis.securityGroupId],
-      // ElastiCache Serverless scales storage + ECPU automatically;
-      // we don't pin limits for dev. Prod can add usage caps via
-      // CacheUsageLimits when it lands.
-    });
-    this.redisCluster.addDependency(redisSubnetGroup);
+    // --- ElastiCache Serverless Redis (removed) ---
+    // Previously provisioned here, but the backend ships with
+    // USE_REDIS=false and App Runner has no VPC connector — the
+    // cluster was unreachable AND being billed (~$60/month).
+    // When Phase 11 wires the VPC connector + refresh-token blocklist,
+    // re-add the `CfnServerlessCache` + `CfnSubnetGroup` block (the
+    // `sgRedis` in NetworkStack is still in place for that day).
 
     // --- S3 bucket for AI-generated images ---
     // S3 bucket names are globally unique. Append the account ID so
@@ -221,10 +215,6 @@ export class DataStack extends Stack {
     new CfnOutput(this, "RdsSecretArn", {
       value: this.rdsInstance.secret!.secretArn,
       exportName: `${id}-rds-secret-arn`,
-    });
-    new CfnOutput(this, "RedisEndpoint", {
-      value: this.redisCluster.attrEndpointAddress,
-      exportName: `${id}-redis-endpoint`,
     });
     new CfnOutput(this, "ImagesBucketName", {
       value: this.imagesBucket.bucketName,

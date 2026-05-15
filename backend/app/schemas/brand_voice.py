@@ -33,8 +33,18 @@ class BrandVoiceCreate(BaseModel):
 class BrandVoiceUpdate(BaseModel):
     """Body for PATCH /brand-voices/:id.
 
-    Every field is optional — only the keys present on the wire are
-    applied. Pydantic's `model_fields_set` reveals which keys arrived.
+    Every field is optional — **only the keys present on the wire are
+    applied**. The router uses Pydantic's `model_fields_set` to filter
+    out unsent keys, so:
+
+      - Sending `{"name": "New name"}` updates only `name`.
+      - Omitting a key leaves its current value untouched.
+
+    To **clear** a nullable string column (`description`,
+    `sample_text`, `target_audience`), send an empty string `""`
+    rather than `null` — `null` is not used as a "clear me" signal.
+    The list-typed fields (`tone_descriptors`, `banned_words`) accept
+    an empty array `[]` to clear them.
     """
 
     model_config = ConfigDict(extra="forbid")

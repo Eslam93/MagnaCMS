@@ -4,7 +4,7 @@ A production-grade SaaS that helps marketers generate, manage, and improve marke
 
 > **Status:** in active development. The repo is functional from day one — see the dev log for what works today vs. what's next.
 
-![CI – Backend](https://img.shields.io/badge/backend--ci-pending-lightgrey) ![CI – Frontend](https://img.shields.io/badge/frontend--ci-pending-lightgrey) ![Deploy](https://img.shields.io/badge/deploy-pending-lightgrey) ![License](https://img.shields.io/badge/license-MIT-blue)
+[![Backend CI](https://github.com/Eslam93/MagnaCMS/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/Eslam93/MagnaCMS/actions/workflows/backend-ci.yml) [![Frontend CI](https://github.com/Eslam93/MagnaCMS/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/Eslam93/MagnaCMS/actions/workflows/frontend-ci.yml) [![Infra CI](https://github.com/Eslam93/MagnaCMS/actions/workflows/infra-ci.yml/badge.svg)](https://github.com/Eslam93/MagnaCMS/actions/workflows/infra-ci.yml) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -36,12 +36,12 @@ Five core flows:
 | Frontend | Next.js 15 + TypeScript + Tailwind + shadcn/ui + TanStack Query + Zod + React Hook Form |
 | Backend | FastAPI + Python 3.12 + Pydantic v2 + async SQLAlchemy 2.0 + Alembic |
 | Database | PostgreSQL 16 |
-| Cache / rate limit / idempotency | Redis 7 (in-memory fallback when `USE_REDIS=false`) |
+| Cache / rate limit / idempotency | Redis 7 _(plumbed in `.env.example`; backend runs with the in-memory fallback today — `USE_REDIS=false`. ElastiCache provisioning is deferred until the VPC-connector + refresh-token-blocklist work in Phase 11.)_ |
 | AI — text | OpenAI `gpt-5.4-mini-2026-03-17` |
 | AI — image | OpenAI `gpt-image-1` |
-| Object storage | S3 (private, served via CloudFront with Origin Access Control) |
-| Auth | Custom JWT (httpOnly refresh cookie + rotation) |
-| Hosting | AWS App Runner (backend) + Amplify Hosting (frontend) + RDS Postgres + ElastiCache Serverless Redis |
+| Object storage | S3 bucket provisioned (BlockPublic + SSE) _(generated images currently live on the App Runner local disk via `IImageStorage` → `LocalImageStorage`; the S3 + CloudFront adapter swap lands with the next deploy batch — see [`SLICE_PLAN.md`](./SLICE_PLAN.md) §4.)_ |
+| Auth | Custom JWT (httpOnly refresh cookie + rotation + Origin-based CSRF guard) |
+| Hosting | AWS App Runner (backend) + Amplify Hosting (frontend) + RDS Postgres _(ElastiCache Serverless Redis lights up with Phase 11 — wired in NetworkStack, not yet provisioned.)_ |
 | Infra-as-code | AWS CDK in TypeScript |
 | Observability | structlog + CloudWatch + Sentry |
 | CI/CD | GitHub Actions |
@@ -67,7 +67,7 @@ Services come up on:
 | Postgres | `localhost:5432` (user/pass: `app` / `app`) |
 | Redis | `localhost:6379` |
 
-Once the backend application code lands you'll additionally run:
+First-time database setup + a seeded demo account:
 
 ```bash
 docker-compose exec backend alembic upgrade head
@@ -75,6 +75,8 @@ docker-compose exec backend python -m app.scripts.seed
 ```
 
 ## 5. Architecture
+
+Target architecture (CloudFront + Redis are the next-batch additions — see the caveats in §3):
 
 ```
 Browser
@@ -85,6 +87,9 @@ Browser
   │                          api calls to api.<domain>
   │
   └─── images.<domain> ────→ CloudFront ──→ S3 (private generated images)
+                              (today: images served by App Runner's
+                               `/local-images` static mount until the
+                               S3 adapter ships in the deploy batch)
 
 api.<domain>
   │
@@ -93,8 +98,9 @@ App Runner — FastAPI containers (auto-scale, PUBLIC egress, no VPC connector)
   │
   ├──→ RDS Postgres (strict SG, public endpoint with App-Runner-IP allowlist)
   ├──→ ElastiCache Redis (rate limit, cache, idempotency, refresh-token blocklist)
+  │       (today: in-memory fallback — USE_REDIS=false until Phase 11)
   ├──→ OpenAI API (gpt-5.4-mini text, gpt-image-1 image)
-  └──→ S3 (persist generated images)
+  └──→ S3 (target; today: local-disk via IImageStorage protocol)
 ```
 
 Full rationale and key trade-offs: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
@@ -172,10 +178,10 @@ cd backend && uv run pytest --cov=app --cov-fail-under=80
 
 # Frontend
 cd frontend && pnpm test --run
-
-# E2E (Playwright)
-cd frontend && pnpm playwright test
 ```
+
+Playwright E2E (`@playwright/test` + a happy-path spec) is on the backlog
+but not wired yet — see [the open backlog](https://github.com/Eslam93/MagnaCMS/issues/86).
 
 ## 10. Deployment
 
@@ -184,7 +190,7 @@ Infrastructure is defined in [`infra/`](./infra/) using AWS CDK in TypeScript. F
 | Stack | Owns |
 |---|---|
 | `magnacms-dev-network` | VPC + 2 AZs (public subnets only) + RDS/Redis security groups |
-| `magnacms-dev-data` | RDS Postgres, ElastiCache Serverless Redis, S3 images bucket, Secrets Manager (JWT + OpenAI key) |
+| `magnacms-dev-data` | RDS Postgres, S3 images bucket, Secrets Manager (JWT + OpenAI key). ElastiCache Serverless Redis was previously here but is currently dropped pending the Phase-11 VPC-connector work. |
 | `magnacms-dev-compute` | ECR repo, App Runner backend service, IAM roles, Fargate task definition for migrations |
 | `magnacms-dev-edge` | Amplify hosting app (CloudFront-for-images deferred to Phase 5; see [DEVLOG.md](./DEVLOG.md)) |
 | `magnacms-dev-observability` | CloudWatch log groups with 14-day retention |

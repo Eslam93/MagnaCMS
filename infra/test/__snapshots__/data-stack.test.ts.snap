@@ -57,17 +57,6 @@ exports[`DataStack (dev) matches snapshot 1`] = `
         "Ref": "PostgresSecretAttachment75CD6F6F",
       },
     },
-    "RedisEndpoint": {
-      "Export": {
-        "Name": "test-data-redis-endpoint",
-      },
-      "Value": {
-        "Fn::GetAtt": [
-          "Redis",
-          "Endpoint.Address",
-        ],
-      },
-    },
   },
   "Parameters": {
     "BootstrapVersion": {
@@ -395,44 +384,6 @@ exports[`DataStack (dev) matches snapshot 1`] = `
         ],
       },
       "Type": "AWS::RDS::DBSubnetGroup",
-    },
-    "Redis": {
-      "DependsOn": [
-        "RedisSubnetGroup",
-      ],
-      "Properties": {
-        "Engine": "redis",
-        "SecurityGroupIds": [
-          {
-            "Fn::ImportValue": "test-network:ExportsOutputFnGetAttSgRedis85D0B09AGroupId0721C382",
-          },
-        ],
-        "ServerlessCacheName": "magnacms-dev-redis",
-        "SubnetIds": [
-          {
-            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet1Subnet2BB74ED74EB42ADC",
-          },
-          {
-            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet2SubnetE34B022AC8BB6627",
-          },
-        ],
-      },
-      "Type": "AWS::ElastiCache::ServerlessCache",
-    },
-    "RedisSubnetGroup": {
-      "Properties": {
-        "CacheSubnetGroupName": "magnacms-dev-redis-subnets",
-        "Description": "Redis subnet group for dev",
-        "SubnetIds": [
-          {
-            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet1Subnet2BB74ED74EB42ADC",
-          },
-          {
-            "Fn::ImportValue": "test-network:ExportsOutputRefVpcpublicSubnet2SubnetE34B022AC8BB6627",
-          },
-        ],
-      },
-      "Type": "AWS::ElastiCache::SubnetGroup",
     },
     "testdataPostgresSecret7D0C1FF33fdaad7efa858a3daf9490cf0a702aeb": {
       "DeletionPolicy": "Delete",

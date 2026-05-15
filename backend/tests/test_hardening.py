@@ -75,6 +75,10 @@ def _build_settings(monkeypatch: MonkeyPatch, **overrides: str) -> Settings:
         "JWT_SECRET": _STRONG_HEX_SECRET,
         "AI_PROVIDER_MODE": "openai",
         "OPENAI_API_KEY": "sk-proj-fake-but-not-placeholder-value-for-test",
+        # Real cross-origin URL so the non-local cors-origin validator
+        # (which rejects localhost in non-local envs) doesn't fire on
+        # the implicit default before the test's actual assertion.
+        "CORS_ORIGINS": "https://test-frontend.example.com",
     }
     base.update(overrides)
     for k, v in base.items():

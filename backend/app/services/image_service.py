@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError, ProviderError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ProviderError, ValidationError
 from app.core.logging import get_logger
 from app.db.enums import ImageProvider
 from app.db.models import ContentPiece, GeneratedImage, User
@@ -102,11 +102,20 @@ class ImageService:
                 code="UNSUPPORTED_IMAGE_STYLE",
             )
 
-        piece = await self._content_repo.get_for_user(content_id, user.id)
+        # `for_update=True` serializes concurrent regenerations of the
+        # same piece. Without the lock, two POSTs would both fire the
+        # upstream image call before the partial unique index on
+        # `generated_images.is_current` rejected the second INSERT,
+        # wasting ~$0.04 per double-click at medium quality.
+        piece = await self._content_repo.get_for_user(
+            content_id,
+            user.id,
+            for_update=True,
+        )
         if piece is None:
             raise NotFoundError("Content not found.", code="CONTENT_NOT_FOUND")
         if not piece.rendered_text or not piece.rendered_text.strip():
-            raise ValidationError(
+            raise ConflictError(
                 "Content has no rendered text to base an image on.",
                 code="CONTENT_NOT_READY_FOR_IMAGE",
             )
@@ -138,11 +147,15 @@ class ImageService:
             raise ProviderError(f"Image provider failed: {exc}") from exc
 
         # --- Step 3: upload bytes; record current ---
-        _, cdn_url = await self._storage.store(image_bytes=image_result.image_bytes)
-        # The S3-style "key" we record is actually the URL trail —
-        # callers don't need it for local storage, but persisting it
-        # keeps the row self-describing once cloud storage lands.
-        s3_key = cdn_url.rsplit("/", 1)[-1]
+        # Storage returns a key only. The URL is derived at projection
+        # time via `storage.public_url_for(key)` — `cdn_url` is kept on
+        # the row for backwards-compat with old rows but ALSO refreshed
+        # on write so a config change to `IMAGES_CDN_BASE_URL` rewrites
+        # every new row's URL automatically. Old rows projected through
+        # the router use the freshly-computed URL too (see
+        # `routers/content.py`).
+        s3_key = await self._storage.store(image_bytes=image_result.image_bytes)
+        cdn_url = self._storage.public_url_for(s3_key)
 
         await self._image_repo.mark_others_not_current(piece.id)
         provider_enum = self._image_provider_enum(image_result.model)

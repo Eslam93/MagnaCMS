@@ -29,6 +29,7 @@ below reads outer-to-inner along the request path:
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Final
@@ -42,12 +43,13 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from app.api.v1.router import v1_router
-from app.core.config import get_settings
+from app.core.config import Environment, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.db.session import close_db_engine
+from app.middleware.csrf import CsrfOriginMiddleware
 from app.middleware.logging import AccessLogMiddleware
-from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware, RateLimitRule
 from app.middleware.request_id import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.services.image_storage import LOCAL_IMAGES_DIR
@@ -65,6 +67,24 @@ _AUTH_RATE_LIMITS: Final[dict[str, int]] = {
     "/api/v1/auth/refresh": 10,
     "/api/v1/content/generate": 20,
 }
+
+# Pattern rules cover dynamic paths the exact-path dict can't. Each
+# pattern carries a stable `key` so two endpoints never share a counter.
+# Image generation is the expensive one (~$0.04/image at medium quality)
+# — cap it tighter than text-gen. Improver runs two LLM calls per
+# invocation, so its cap is also conservative.
+_RATE_LIMIT_PATTERNS: Final[list[RateLimitRule]] = [
+    RateLimitRule(
+        pattern=re.compile(r"^/api/v1/content/[0-9a-fA-F-]{36}/image$"),
+        limit=6,
+        key="pattern:content_image_generate",
+    ),
+    RateLimitRule(
+        pattern=re.compile(r"^/api/v1/improve$"),
+        limit=10,
+        key="pattern:improve",
+    ),
+]
 
 
 @asynccontextmanager
@@ -105,23 +125,37 @@ def create_app() -> FastAPI:
             ],
         )
 
+    # Swagger/ReDoc/openapi.json are convenient in dev and the demo
+    # environment but introduce a Swagger-UI script surface that
+    # forces `unsafe-inline` in CSP. Hide them in staging/production —
+    # external API consumers should get a bundled spec via release
+    # artifacts, not a public live-docs page.
+    docs_enabled = settings.environment in {Environment.LOCAL, Environment.DEV}
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         description="AI Content Marketing Suite — backend API.",
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     # Add middleware INNER-MOST first so the LAST-added one wraps outside
     # everything else (Starlette's documented ordering).
     app.add_middleware(AccessLogMiddleware)  # innermost — runs last on the way out
-    app.add_middleware(RateLimitMiddleware, rules=_AUTH_RATE_LIMITS)
+    app.add_middleware(
+        RateLimitMiddleware,
+        rules=_AUTH_RATE_LIMITS,
+        patterns=_RATE_LIMIT_PATTERNS,
+    )
     app.add_middleware(
         RequestIDMiddleware
     )  # binds contextvar so RateLimit's 429 envelope carries it
+    # CSRF guard sits INSIDE CORS (so preflights still short-circuit) and
+    # OUTSIDE rate-limit (so a rejected origin doesn't consume a slot).
+    # Protects /auth/refresh + /auth/logout — the cookie-only endpoints.
+    app.add_middleware(CsrfOriginMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)  # wraps RateLimit so 429 carries security headers
     app.add_middleware(
         CORSMiddleware,  # outermost — preflights short-circuit before anything else

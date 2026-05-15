@@ -56,6 +56,10 @@ async def test_non_local_env_emits_hsts(monkeypatch: MonkeyPatch) -> None:
         # We're testing HSTS, not provider validation, so flip it on.
         allow_mock_provider=True,
         jwt_secret=SecretStr("3f9a17ce4d2b48a1c0e7f63bda5912f48e6c0a9d7b2e54f1c8a3d6094e7b1c2f"),
+        # The non-local cors-origin validator rejects the default
+        # `localhost:3000` in production. Provide a real-shaped origin
+        # so this HSTS-focused test doesn't trip the validator instead.
+        cors_origins=["https://test-frontend.example.com"],  # type: ignore[arg-type]
     )
     # Patch at the use sites — security_headers imports the symbol, so
     # patching `app.core.config.get_settings` alone wouldn't reach it.

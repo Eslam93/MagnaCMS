@@ -346,7 +346,7 @@ async def test_restore_returns_validation_error_when_not_deleted(
         f"/api/v1/content/{generated['content_id']}/restore",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 409
     assert response.json()["error"]["code"] == "CONTENT_NOT_DELETED"
 
 
@@ -376,5 +376,5 @@ async def test_restore_outside_24h_window_returns_validation_error(
         f"/api/v1/content/{content_id}/restore",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 409
     assert response.json()["error"]["code"] == "RESTORE_WINDOW_EXPIRED"

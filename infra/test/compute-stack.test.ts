@@ -26,7 +26,6 @@ describe("ComputeStack (dev)", () => {
     cfg,
     vpc: network.vpc,
     sgRds: network.sgRds,
-    sgRedis: network.sgRedis,
   });
   const stack = new ComputeStack(app, "test-compute", {
     env: { region: cfg.region },

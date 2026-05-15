@@ -1,10 +1,12 @@
 /**
  * DataStack snapshot + resource-count tests.
  *
- * Pins the brief's data topology: one RDS instance, one Serverless
- * Redis, one S3 bucket, two Secrets Manager secrets (JWT + OpenAI key
- * — RDS auto-creates its own secret so the count is 3 from CDK's
- * perspective).
+ * Pins the data topology: one RDS instance, one S3 bucket, two
+ * Secrets Manager secrets (JWT + OpenAI key — RDS auto-creates its
+ * own secret so the count is 3 from CDK's perspective). The
+ * ElastiCache Serverless Redis cluster was dropped in the
+ * security-and-storage hardening pass; if it returns, re-add the
+ * resource-count assertion.
  */
 
 import { App } from "aws-cdk-lib";
@@ -26,7 +28,6 @@ describe("DataStack (dev)", () => {
     cfg,
     vpc: network.vpc,
     sgRds: network.sgRds,
-    sgRedis: network.sgRedis,
   });
   const template = Template.fromStack(stack);
 
@@ -44,12 +45,9 @@ describe("DataStack (dev)", () => {
     });
   });
 
-  it("provisions one ElastiCache Serverless Redis", () => {
-    template.resourceCountIs("AWS::ElastiCache::ServerlessCache", 1);
-    template.hasResourceProperties("AWS::ElastiCache::ServerlessCache", {
-      Engine: "redis",
-      ServerlessCacheName: "magnacms-dev-redis",
-    });
+  it("does not provision an ElastiCache cluster (deferred to Phase 11)", () => {
+    template.resourceCountIs("AWS::ElastiCache::ServerlessCache", 0);
+    template.resourceCountIs("AWS::ElastiCache::SubnetGroup", 0);
   });
 
   it("provisions one S3 images bucket with public access blocked", () => {

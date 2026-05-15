@@ -41,16 +41,27 @@ class ContentRepository:
         self,
         content_id: uuid.UUID,
         user_id: uuid.UUID,
+        *,
+        for_update: bool = False,
     ) -> ContentPiece | None:
         """Look up a content piece scoped to its owner. Soft-deleted rows
         are excluded — restoring lives on its own endpoint and reads will
         resurface them then.
+
+        `for_update=True` takes a row-level lock for the remainder of
+        the current transaction. Used by the image-regen pipeline to
+        serialize concurrent regenerations of the same piece — without
+        the lock, two parallel POSTs would both fire the upstream
+        image call (~$0.04 each at medium quality) before the partial
+        unique index rejected the second INSERT.
         """
         stmt = select(ContentPiece).where(
             ContentPiece.id == content_id,
             ContentPiece.user_id == user_id,
             ContentPiece.deleted_at.is_(None),
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

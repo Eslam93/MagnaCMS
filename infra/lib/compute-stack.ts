@@ -46,6 +46,7 @@ import {
   ContainerImage,
   FargateTaskDefinition,
   LogDriver,
+  Secret as EcsSecret,
 } from "aws-cdk-lib/aws-ecs";
 import { Repository, TagMutability } from "aws-cdk-lib/aws-ecr";
 import {
@@ -283,18 +284,33 @@ export class ComputeStack extends Stack {
       environment: {
         ENVIRONMENT: cfg.envName,
         AWS_REGION: cfg.region,
+        AI_PROVIDER_MODE: "openai",
+        // The Settings validator rejects localhost CORS in non-local
+        // envs. The migration task doesn't serve HTTP, so we pass a
+        // non-localhost dummy origin that satisfies the validator
+        // without enabling anything.
+        CORS_ORIGINS: "https://migration-task.invalid",
         // Plain env var (not a `secrets:` ref): the backend treats this
         // as an ARN and fetches the JSON via boto3 inside the task,
         // matching the App Runner wiring above. `secrets.fromSecretsManager`
         // would inject the JSON value here and break the SecretId lookup.
         RDS_SECRET_ARN: rdsInstance.secret!.secretArn,
       },
+      // Importing `app` to drive Alembic boots the Settings validator,
+      // which requires JWT_SECRET + OPENAI_API_KEY in non-local envs.
+      // Without these refs the migration container fails at startup
+      // with a config validation error before Alembic ever runs.
+      secrets: {
+        JWT_SECRET: EcsSecret.fromSecretsManager(jwtSecret),
+        OPENAI_API_KEY: EcsSecret.fromSecretsManager(openaiApiKeySecret),
+      },
     });
 
     // The migration task role needs GetSecretValue on the RDS secret
     // so the in-container boto3 call can resolve `RDS_SECRET_ARN`.
     // (When we used `EcsSecret.fromSecretsManager`, CDK added this
-    // grant automatically. Dropping that ref means adding it by hand.)
+    // grant automatically. Dropping that ref means adding it by hand.
+    // The two `secrets:` refs above auto-grant their own access.)
     rdsInstance.secret!.grantRead(this.migrationTaskDefinition.taskRole);
 
     new CfnOutput(this, "EcrRepoUri", {
