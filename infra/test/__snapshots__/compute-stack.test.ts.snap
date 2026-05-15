@@ -242,6 +242,15 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
       },
       "Type": "AWS::IAM::Policy",
     },
+    "AutoScalingConfig": {
+      "Properties": {
+        "AutoScalingConfigurationName": "magnacms-dev-apprunner-asg",
+        "MaxConcurrency": 80,
+        "MaxSize": 3,
+        "MinSize": 1,
+      },
+      "Type": "AWS::AppRunner::AutoScalingConfiguration",
+    },
     "BackendRepo7FFBAD06": {
       "DeletionPolicy": "Delete",
       "Properties": {
@@ -530,7 +539,16 @@ exports[`ComputeStack (dev) matches snapshot 1`] = `
       "UpdateReplacePolicy": "Retain",
     },
     "Service": {
+      "DependsOn": [
+        "AutoScalingConfig",
+      ],
       "Properties": {
+        "AutoScalingConfigurationArn": {
+          "Fn::GetAtt": [
+            "AutoScalingConfig",
+            "AutoScalingConfigurationArn",
+          ],
+        },
         "HealthCheckConfiguration": {
           "HealthyThreshold": 1,
           "Interval": 10,

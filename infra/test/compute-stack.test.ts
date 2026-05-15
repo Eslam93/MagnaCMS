@@ -114,6 +114,23 @@ describe("ComputeStack (dev)", () => {
     });
   });
 
+  it("App Runner has an explicit autoscaling configuration honoring cfg.apprunnerMin/MaxInstances", () => {
+    // Default behavior (autoScalingConfigurationArn: undefined) lets
+    // the service scale to 25 instances per the account-default
+    // config — way more than the DB pool budget. Pin the contract.
+    template.resourceCountIs("AWS::AppRunner::AutoScalingConfiguration", 1);
+    template.hasResourceProperties("AWS::AppRunner::AutoScalingConfiguration", {
+      AutoScalingConfigurationName: "magnacms-dev-apprunner-asg",
+      MinSize: cfg.apprunnerMinInstances,
+      MaxSize: cfg.apprunnerMaxInstances,
+      MaxConcurrency: 80,
+    });
+    // And the service references it (not the account default).
+    template.hasResourceProperties("AWS::AppRunner::Service", {
+      AutoScalingConfigurationArn: Match.anyValue(),
+    });
+  });
+
   it("App Runner runtime secrets inject JWT + OpenAI secret VALUES (bare strings)", () => {
     template.hasResourceProperties("AWS::AppRunner::Service", {
       SourceConfiguration: {

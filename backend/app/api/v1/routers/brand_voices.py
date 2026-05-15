@@ -110,10 +110,7 @@ async def update_voice(
     voice = await repo.get_for_user(voice_id, current_user.id)
     if voice is None:
         raise NotFoundError("Brand voice not found.", code="BRAND_VOICE_NOT_FOUND")
-    updates = {
-        key: getattr(body, key)
-        for key in body.model_fields_set
-    }
+    updates = {key: getattr(body, key) for key in body.model_fields_set}
     voice = await repo.update(voice, updates)
     await db.commit()
     return _project(voice)

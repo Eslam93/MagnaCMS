@@ -28,14 +28,8 @@ const mocks = vi.hoisted(() => ({
   restoreMutate: vi.fn(),
   refetchListQuery: vi.fn(),
 }));
-const {
-  toastFn,
-  toastErrorFn,
-  toastSuccessFn,
-  deleteMutate,
-  restoreMutate,
-  refetchListQuery,
-} = mocks;
+const { toastFn, toastErrorFn, toastSuccessFn, deleteMutate, restoreMutate, refetchListQuery } =
+  mocks;
 
 vi.mock("sonner", () => ({
   toast: Object.assign(mocks.toastFn, {

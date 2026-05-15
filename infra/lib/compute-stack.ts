@@ -11,7 +11,12 @@
  *       * NO VPC connector. Public egress to OpenAI/S3/Secrets.
  *       * Image source: the ECR repo (placeholder ImageIdentifier
  *         `:latest` — the deploy workflow pushes real images).
- *       * Auto-scaling: min 1, max 3, concurrency 80.
+ *       * Auto-scaling: an explicit `CfnAutoScalingConfiguration` is
+ *         attached so the service honors `cfg.apprunnerMin/MaxInstances`
+ *         (default min=1, max=3) instead of App Runner's per-account
+ *         default which scales up to 25. The DB pool is sized to that
+ *         max in `backend/app/db/session.py`.
+ *       * Max concurrent requests per instance: 80.
  *       * Health check at `/api/v1/health`.
  *       * Env split: secrets injected via `RuntimeEnvironmentSecrets`
  *         (Secrets Manager refs); plain config via
@@ -40,7 +45,10 @@
  */
 
 import { CfnOutput, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
-import { CfnService } from "aws-cdk-lib/aws-apprunner";
+import {
+  CfnAutoScalingConfiguration,
+  CfnService,
+} from "aws-cdk-lib/aws-apprunner";
 import {
   Cluster,
   ContainerImage,
@@ -89,6 +97,7 @@ export interface ComputeStackProps extends StackProps {
 export class ComputeStack extends Stack {
   public readonly ecrRepo: Repository;
   public readonly apprunnerService: CfnService;
+  public readonly apprunnerAutoScaling: CfnAutoScalingConfiguration;
   public readonly migrationTaskDefinition: FargateTaskDefinition;
   public readonly ecsCluster: Cluster;
 
@@ -169,6 +178,24 @@ export class ComputeStack extends Stack {
       description: "Service role App Runner uses to pull the ECR image",
     });
     this.ecrRepo.grantPull(apprunnerAccessRole);
+
+    // --- App Runner autoscaling configuration ---
+    // App Runner's per-account default config allows up to 25 instances
+    // and 100 concurrent requests per instance. With the DB pool sized
+    // to `cfg.apprunnerMaxInstances`, an unbounded fleet would exhaust
+    // `db.t4g.micro`'s ~87 max_connections. Explicit config keeps the
+    // service inside the configured budget. `AutoScalingConfigurationName`
+    // is scoped per-region; the env prefix makes it unique across envs.
+    this.apprunnerAutoScaling = new CfnAutoScalingConfiguration(
+      this,
+      "AutoScalingConfig",
+      {
+        autoScalingConfigurationName: `magnacms-${cfg.envName}-apprunner-asg`,
+        minSize: cfg.apprunnerMinInstances,
+        maxSize: cfg.apprunnerMaxInstances,
+        maxConcurrency: 80,
+      },
+    );
 
     // --- App Runner service ---
     // DATABASE_URL is assembled at backend startup from the RDS secret.
@@ -270,11 +297,17 @@ export class ComputeStack extends Stack {
         healthyThreshold: 1,
         unhealthyThreshold: 5,
       },
-      autoScalingConfigurationArn: undefined, // use default
+      autoScalingConfigurationArn:
+        this.apprunnerAutoScaling.attrAutoScalingConfigurationArn,
       networkConfiguration: {
         egressConfiguration: { egressType: "DEFAULT" }, // public egress, no VPC connector
       },
     });
+    // CloudFormation needs the autoscaling config to be CREATE_COMPLETE
+    // before the service can reference its ARN; the attribute reference
+    // gives it as a token, but the explicit `addDependency` covers the
+    // case where the service is updated independently.
+    this.apprunnerService.addDependency(this.apprunnerAutoScaling);
 
     // --- Migration runner (Fargate task definition) ---
     // Runs `alembic upgrade head` as a one-off task pre-deploy.
