@@ -1,18 +1,18 @@
 # MagnaCMS Infrastructure (AWS CDK, TypeScript)
 
-This directory holds the AWS CDK app that defines every cloud resource MagnaCMS uses: the VPC, RDS Postgres, ElastiCache Redis, App Runner backend service, ECR repository, Amplify-hosted frontend, CloudFront distribution for images, and CloudWatch log groups.
+This directory holds the AWS CDK app that defines every cloud resource MagnaCMS uses: the VPC, RDS Postgres, ElastiCache Redis (provisioned but not yet used — see [DEVLOG.md](../DEVLOG.md)), App Runner backend service, ECR repository, Amplify-hosted frontend, and CloudWatch alarm scaffolding (CloudFront-for-images is deferred to Phase 5; see [P2.5 PR](https://github.com/Eslam93/MagnaCMS/pull/124) for the circular-dependency reasoning).
 
 ## Status
 
 | Stack | PR | Status |
 |---|---|---|
-| `magnacms-dev-network` | P2.2 | 📋 not yet |
-| `magnacms-dev-data` | P2.3 | 📋 not yet |
-| `magnacms-dev-compute` | P2.4 | 📋 not yet |
-| `magnacms-dev-edge` | P2.5 | 📋 not yet |
-| `magnacms-dev-observability` | P2.6 | 📋 not yet |
+| `magnacms-dev-network` | P2.2 | ✅ shipped |
+| `magnacms-dev-data` | P2.3 | ✅ shipped |
+| `magnacms-dev-compute` | P2.4 | ✅ shipped |
+| `magnacms-dev-edge` | P2.5 | ✅ shipped (Amplify only — CloudFront deferred to Phase 5) |
+| `magnacms-dev-observability` | P2.6 | ✅ shipped (placeholder; CloudWatch alarm lands in P11.6) |
 
-The current PR (**P2.1**) lands the bootstrap: TypeScript project, jest, ts-node, `aws-cdk-lib`, the env-config loader, and the `infra-ci.yml` workflow that gates every PR with `cdk synth --all`.
+All five stacks `cdk synth --all -c env=dev` cleanly on every PR via `.github/workflows/infra-ci.yml`. Actual `cdk deploy` is a manual step — see [`DEPLOY.md`](./DEPLOY.md).
 
 ## Layout
 

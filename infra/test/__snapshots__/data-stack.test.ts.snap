@@ -310,9 +310,9 @@ exports[`DataStack (dev) matches snapshot 1`] = `
     "OpenaiApiKeySecret330F502F": {
       "DeletionPolicy": "Delete",
       "Properties": {
-        "Description": "OpenAI API key (sk-proj-...). Populated manually via console after first deploy — DataStack creates the secret empty so ComputeStack can reference its ARN.",
-        "GenerateSecretString": {},
+        "Description": "OpenAI API key (sk-proj-...). Populated manually via console after first deploy.",
         "Name": "magnacms-dev-openai-api-key",
+        "SecretString": "sk-proj-REPLACE_ME-paste-the-real-key-via-console-before-first-deploy",
       },
       "Type": "AWS::SecretsManager::Secret",
       "UpdateReplacePolicy": "Delete",

@@ -32,7 +32,14 @@
  * EdgeStack can attach the OAC policy.
  */
 
-import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
+import {
+  CfnOutput,
+  Duration,
+  RemovalPolicy,
+  SecretValue,
+  Stack,
+  type StackProps,
+} from "aws-cdk-lib";
 import {
   InstanceClass,
   InstanceSize,
@@ -170,10 +177,17 @@ export class DataStack extends Stack {
       secretName: `magnacms-${cfg.envName}-openai-api-key`,
       description:
         "OpenAI API key (sk-proj-...). Populated manually via console " +
-        "after first deploy — DataStack creates the secret empty so " +
-        "ComputeStack can reference its ARN.",
-      // No generateSecretString → secret is created empty and stays
-      // empty until the user pastes the real key.
+        "after first deploy.",
+      // Explicit placeholder value so the backend's
+      // _reject_weak_secrets_outside_local validator fails fast at
+      // App Runner boot time. Without this, CDK defaults to a random
+      // 32-char password which passes the placeholder check and
+      // silently runs with a fake key until the first OpenAI call.
+      // SecretValue.unsafePlainText embeds the string in the CFN
+      // template, which is fine for an explicit placeholder.
+      secretStringValue: SecretValue.unsafePlainText(
+        "sk-proj-REPLACE_ME-paste-the-real-key-via-console-before-first-deploy",
+      ),
       removalPolicy:
         cfg.envName === "dev" ? RemovalPolicy.DESTROY : RemovalPolicy.RETAIN,
     });

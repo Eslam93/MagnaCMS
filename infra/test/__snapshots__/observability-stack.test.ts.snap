@@ -2,49 +2,11 @@
 
 exports[`ObservabilityStack (dev) matches snapshot 1`] = `
 {
-  "Outputs": {
-    "ApplicationLogGroupName": {
-      "Export": {
-        "Name": "test-observability-application-log-group",
-      },
-      "Value": {
-        "Ref": "AppRunnerApplicationLogs4179C469",
-      },
-    },
-    "ServiceLogGroupName": {
-      "Export": {
-        "Name": "test-observability-service-log-group",
-      },
-      "Value": {
-        "Ref": "AppRunnerServiceLogsD67BE5BF",
-      },
-    },
-  },
   "Parameters": {
     "BootstrapVersion": {
       "Default": "/cdk-bootstrap/hnb659fds/version",
       "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
       "Type": "AWS::SSM::Parameter::Value<String>",
-    },
-  },
-  "Resources": {
-    "AppRunnerApplicationLogs4179C469": {
-      "DeletionPolicy": "Retain",
-      "Properties": {
-        "LogGroupName": "/aws/apprunner/magnacms-dev-backend/application",
-        "RetentionInDays": 14,
-      },
-      "Type": "AWS::Logs::LogGroup",
-      "UpdateReplacePolicy": "Retain",
-    },
-    "AppRunnerServiceLogsD67BE5BF": {
-      "DeletionPolicy": "Retain",
-      "Properties": {
-        "LogGroupName": "/aws/apprunner/magnacms-dev-backend/service",
-        "RetentionInDays": 14,
-      },
-      "Type": "AWS::Logs::LogGroup",
-      "UpdateReplacePolicy": "Retain",
     },
   },
   "Rules": {
