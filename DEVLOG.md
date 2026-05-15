@@ -4,6 +4,28 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Slice 5: improver — analyze, then rewrite
+
+The brief asks for an explicit two-pass chain on `/improve` rather than the obvious one-shot "please improve this." Slice 5 implements exactly that: an analyze call returns a structured `{ issues, planned_changes }` list, then a rewrite call consumes those planned changes and returns the final improved text plus an explanation and a `changes_summary`. Both calls go through the same three-stage parse fallback as content generation, applied independently to each stage.
+
+### Two prompts, one service, summed cost
+
+[`improver.py`](backend/app/prompts/improver.py) ships two distinct prompt builders — `build_analyze` and `build_rewrite` — with separate JSON schemas. [`ImproverService.improve`](backend/app/services/improver_service.py) runs analyze first, harvests `planned_changes`, then runs rewrite with the plan baked into the user prompt. The persisted row sums tokens and cost from every call (up to four if both stages retry once each), so the dashboard cost rollup later in Phase 9 stays honest.
+
+### Why force the model to commit to a plan first
+
+Empirically, the rewriter writes cleaner copy when it's been told *what* to change before it picks up the pen. The naive single-pass "improve this" prompt produces text that's better than the original about 60% of the time and worse about 40% — usually because the model deletes the wrong nuance trying to hit a tone target. Forcing the plan first cuts the worse-than-original rate sharply because the rewriter has a checklist it can self-validate against. The cost is real: two LLM calls per improvement instead of one. The trade is intentional; the brief explicitly calls it out as the right shape.
+
+### Goal-specific hints belong in the prompts, not the schema
+
+Each `ImprovementGoal` value (`shorter`, `persuasive`, `formal`, `seo`, `audience_rewrite`) gets a short `_goal_hint` paragraph that's threaded into both the analyze and rewrite prompts. The `audience_rewrite` goal is the only one that requires extra input (`new_audience`); Pydantic's `model_validator` rejects the request at the schema boundary if it's missing, before any LLM call fires. Saves a call, sharpens the error message.
+
+### Frontend: two-pane diff, not token-level
+
+[`ImproveResult`](frontend/components/features/improve-result.tsx) renders original and improved side-by-side in scrollable `<pre>` blocks plus the explanation bullets and a `changes_summary` card (tone shift, length delta, key additions/removals). A real token-level diff library (`diff` from npm) would surface every word change but obscures the overall shape; for marketing copy review the two-pane is what people want. If a future demand for "show me literally which words moved" surfaces, swap in `diff` — the explanation/changes_summary contract doesn't change.
+
+---
+
 ## 2026-05-15 — Slice 3: image generation, two providers, one pipeline
 
 The dashboard had words but no pictures. Slice 3 fixes that: every content piece can now get an `is_current` image generated, regenerated with a different style, and reviewed against prior versions. Two upstream calls per image — an LLM call to *build the visual prompt* from the rendered content, then the image provider call to produce the bytes — feed one storage adapter that writes to local disk in dev and (soon) S3 in prod.
