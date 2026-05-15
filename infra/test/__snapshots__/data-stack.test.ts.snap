@@ -317,6 +317,16 @@ exports[`DataStack (dev) matches snapshot 1`] = `
       "Type": "AWS::SecretsManager::Secret",
       "UpdateReplacePolicy": "Delete",
     },
+    "PgParamsB57E4B90": {
+      "Properties": {
+        "Description": "Postgres parameter group — forces TLS on all connections",
+        "Family": "postgres16",
+        "Parameters": {
+          "rds.force_ssl": "1",
+        },
+      },
+      "Type": "AWS::RDS::DBParameterGroup",
+    },
     "Postgres9DC8BB04": {
       "DeletionPolicy": "Delete",
       "Properties": {
@@ -325,6 +335,9 @@ exports[`DataStack (dev) matches snapshot 1`] = `
         "CopyTagsToSnapshot": true,
         "DBInstanceClass": "db.t4g.micro",
         "DBName": "magnacms",
+        "DBParameterGroupName": {
+          "Ref": "PgParamsB57E4B90",
+        },
         "DBSubnetGroupName": {
           "Ref": "PostgresSubnetGroup9F8A4D6E",
         },

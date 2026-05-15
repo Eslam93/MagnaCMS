@@ -69,7 +69,7 @@ describe("ComputeStack (dev)", () => {
     });
   });
 
-  it("App Runner runtime secrets reference all three Secrets Manager entries", () => {
+  it("App Runner runtime secrets inject JWT + OpenAI secret VALUES (bare strings)", () => {
     template.hasResourceProperties("AWS::AppRunner::Service", {
       SourceConfiguration: {
         ImageRepository: {
@@ -77,12 +77,47 @@ describe("ComputeStack (dev)", () => {
             RuntimeEnvironmentSecrets: Match.arrayWith([
               Match.objectLike({ Name: "JWT_SECRET" }),
               Match.objectLike({ Name: "OPENAI_API_KEY" }),
-              Match.objectLike({ Name: "RDS_SECRET_ARN" }),
             ]),
           },
         },
       },
     });
+  });
+
+  it("RDS_SECRET_ARN is a plain env var on App Runner (not a secret ref)", () => {
+    // The backend reads RDS_SECRET_ARN as an ARN and calls boto3
+    // itself. Injecting it via RuntimeEnvironmentSecrets would put the
+    // RDS JSON blob into the env var and break the SecretId lookup.
+    // Read the raw template so we can inspect both lists directly.
+    const services = template.findResources("AWS::AppRunner::Service");
+    const service = Object.values(services)[0];
+    const imageConfig =
+      service.Properties.SourceConfiguration.ImageRepository.ImageConfiguration;
+    const envNames = (
+      imageConfig.RuntimeEnvironmentVariables as { Name: string }[]
+    ).map((v) => v.Name);
+    const secretNames = (
+      imageConfig.RuntimeEnvironmentSecrets as { Name: string }[]
+    ).map((v) => v.Name);
+    expect(envNames).toContain("RDS_SECRET_ARN");
+    expect(secretNames).not.toContain("RDS_SECRET_ARN");
+  });
+
+  it("migration task receives RDS_SECRET_ARN as a plain env var (not a secret ref)", () => {
+    const taskDefs = template.findResources("AWS::ECS::TaskDefinition");
+    const taskDef = Object.values(taskDefs).find(
+      (t) => t.Properties.Family === "magnacms-dev-migrate",
+    );
+    expect(taskDef).toBeDefined();
+    const container = taskDef!.Properties.ContainerDefinitions[0];
+    const envNames = (container.Environment as { Name: string }[]).map(
+      (v) => v.Name,
+    );
+    const secretNames = ((container.Secrets ?? []) as { Name: string }[]).map(
+      (v) => v.Name,
+    );
+    expect(envNames).toContain("RDS_SECRET_ARN");
+    expect(secretNames).not.toContain("RDS_SECRET_ARN");
   });
 
   it("provisions an ECS cluster + Fargate task definition for migrations", () => {

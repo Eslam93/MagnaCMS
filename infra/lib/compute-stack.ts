@@ -46,7 +46,6 @@ import {
   ContainerImage,
   FargateTaskDefinition,
   LogDriver,
-  Secret as EcsSecret,
 } from "aws-cdk-lib/aws-ecs";
 import { Repository, TagMutability } from "aws-cdk-lib/aws-ecr";
 import {
@@ -155,17 +154,23 @@ export class ComputeStack extends Stack {
     this.ecrRepo.grantPull(apprunnerAccessRole);
 
     // --- App Runner service ---
-    // Construct DATABASE_URL from RDS Secrets Manager entries. The
-    // secret stores `{ username, password, host, port, dbname }` —
-    // App Runner doesn't natively support templating these into a
-    // single env var, so we pass the JSON fields as separate env vars
-    // and let the backend's config.py reconstruct the URL.
+    // DATABASE_URL is assembled at backend startup from the RDS secret.
     //
-    // Actually, simpler: pass the full secret ARN as `RDS_SECRET_ARN`
-    // and let the backend pull and parse it at startup. That avoids
-    // template gymnastics and matches the brief's "secrets at runtime"
-    // model. For now we pass DATABASE_URL via the rds secret's JSON
-    // host field — see comment below.
+    // Two patterns App Runner supports for getting secrets into a
+    // container, and they behave differently:
+    //
+    //   * RuntimeEnvironmentSecrets: the env var receives the secret
+    //     VALUE (the JSON blob for an RDS-managed secret). Right for
+    //     bare-string secrets like JWT_SECRET and OPENAI_API_KEY where
+    //     the backend reads `os.environ[...]` directly.
+    //   * RuntimeEnvironmentVariables: plain string. The backend then
+    //     calls `boto3.get_secret_value(SecretId=arn)` itself, using
+    //     the IAM grant on the instance role.
+    //
+    // For DATABASE_URL we want the second pattern: the env var holds
+    // the ARN, and `app/core/aws_secrets.py` fetches + parses the JSON.
+    // Injecting the JSON value as `RDS_SECRET_ARN` would feed JSON into
+    // `boto3.get_secret_value(SecretId=...)` and fail at startup.
     this.apprunnerService = new CfnService(this, "Service", {
       serviceName: `magnacms-${cfg.envName}-backend`,
       sourceConfiguration: {
@@ -203,6 +208,18 @@ export class ComputeStack extends Stack {
               // IMAGES_CDN_BASE_URL also updated post-deploy with the
               // CloudFront URL from EdgeStack.
               { name: "IMAGES_CDN_BASE_URL", value: "" },
+              // RDS_SECRET_ARN must be a plain env var, NOT a secret
+              // ref — the backend treats it as an ARN and looks up the
+              // JSON itself via boto3 (see app/core/aws_secrets.py).
+              // Injecting via runtimeEnvironmentSecrets would put the
+              // JSON value into the env var and break the SecretId
+              // call at startup. The instance role's GetSecretValue
+              // grant on the RDS secret ARN (below) is what actually
+              // authorizes the fetch.
+              {
+                name: "RDS_SECRET_ARN",
+                value: rdsInstance.secret!.secretArn,
+              },
             ],
             runtimeEnvironmentSecrets: [
               {
@@ -212,17 +229,6 @@ export class ComputeStack extends Stack {
               {
                 name: "OPENAI_API_KEY",
                 value: openaiApiKeySecret.secretArn,
-              },
-              // DATABASE_URL: pass the RDS secret ARN as RDS_SECRET_ARN
-              // and let the backend assemble the URL. Alternative is
-              // to use a secret field selector like
-              // `${rdsInstance.secret!.secretArn}:host::` to pull a
-              // single key, but that's brittle. The backend already
-              // knows how to build a DSN from {host, port, user,
-              // password, dbname}.
-              {
-                name: "RDS_SECRET_ARN",
-                value: rdsInstance.secret!.secretArn,
               },
             ],
           },
@@ -277,14 +283,19 @@ export class ComputeStack extends Stack {
       environment: {
         ENVIRONMENT: cfg.envName,
         AWS_REGION: cfg.region,
-      },
-      secrets: {
-        // Migrations need DATABASE_URL — pass via RDS_SECRET_ARN like
-        // the backend service does. `EcsSecret.fromSecretsManager`
-        // wires the IAM read grant onto the task role automatically.
-        RDS_SECRET_ARN: EcsSecret.fromSecretsManager(rdsInstance.secret!),
+        // Plain env var (not a `secrets:` ref): the backend treats this
+        // as an ARN and fetches the JSON via boto3 inside the task,
+        // matching the App Runner wiring above. `secrets.fromSecretsManager`
+        // would inject the JSON value here and break the SecretId lookup.
+        RDS_SECRET_ARN: rdsInstance.secret!.secretArn,
       },
     });
+
+    // The migration task role needs GetSecretValue on the RDS secret
+    // so the in-container boto3 call can resolve `RDS_SECRET_ARN`.
+    // (When we used `EcsSecret.fromSecretsManager`, CDK added this
+    // grant automatically. Dropping that ref means adding it by hand.)
+    rdsInstance.secret!.grantRead(this.migrationTaskDefinition.taskRole);
 
     new CfnOutput(this, "EcrRepoUri", {
       value: this.ecrRepo.repositoryUri,
