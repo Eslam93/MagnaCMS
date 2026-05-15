@@ -2,7 +2,7 @@
 
 > **This file is the operating manual for the current Claude Code session and any successor sessions (compaction, dispatcher pattern, fresh context).** Read this top-to-bottom before editing code. When state changes (a slice merges, a deploy fact shifts, a known issue is resolved), update this file in the same commit.
 
-**Last updated:** 2026-05-15 (after Slice 1 merge + initial AWS deploy + pivot to local-first).
+**Last updated:** 2026-05-15 (after Slice 2 merge — text gen widened to all four content types).
 
 ---
 
@@ -12,9 +12,10 @@
 |---|---|
 | Slice 0 — Deploy fix gate (P2.11 + P2.12 + P2.13) | ✅ shipped, merged into main |
 | Slice 1 — Text gen, blog only, mock + OpenAI | ✅ shipped in [#135](https://github.com/Eslam93/MagnaCMS/pull/135), merged into main |
+| Slice 2 — Text gen widened (LinkedIn + email + ad copy) | ✅ shipped in [#137](https://github.com/Eslam93/MagnaCMS/pull/137), merged into main |
 | Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded** |
 | Deploy-time fixes (em-dash, NoDecode, migration env, Fargate SG) | em-dash + NoDecode: code in repo. Migration env + SG: documented in §4 as deploy-time TODOs (band-aided live, CDK code unchanged). |
-| Remaining slices | 2, 4, 3, 5, 6 (in that order — see §3 for rationale) |
+| Remaining slices | 4, 3, 5, 6 (in that order — see §3 for rationale) |
 | Time budget | **12 hours of local-first feature work, then 1-2h batch deploy + polish at the end of 24h.** |
 
 ### Live deploy snapshot (preserve — do NOT redeploy in this 12h window)
@@ -66,21 +67,7 @@ Order: **2 → 4 → 3 → 5 → 6**. Rationale: Slice 4 (dashboard) before Slic
 
 ### Slice 2 — Text gen widened (LinkedIn + email + ad copy)
 
-**Branch:** `slice-2/text-gen-widened`. **Budget:** ~2h.
-
-Done when:
-- [ ] Three new prompt modules: `backend/app/prompts/linkedin_post.py`, `email.py`, `ad_copy.py` — each mirroring §7.2/7.3/7.4 of `.private/PROJECT_BRIEF.md` with `PROMPT_VERSION` (`linkedin_post.v1`, `email.v1`, `ad_copy.v1`), `SYSTEM_PROMPT`, `JSON_SCHEMA`, `build_prompt`, `CORRECTIVE_RETRY_INSTRUCTION`.
-- [ ] Three new Pydantic result models in `backend/app/schemas/content.py` (`LinkedInPostResult`, `EmailResult`, `AdCopyResult` with strict `model_config = ConfigDict(extra="forbid")`). Update `GenerateResponse.result` to be the union `BlogPostResult | LinkedInPostResult | EmailResult | AdCopyResult | None`.
-- [ ] Three new renderers in `backend/app/services/renderers/` per §7.0.1 of brief: linkedin → `{hook}\n\n{body}\n\n{cta}\n\n{hashtags joined}`; email → `Subject: ... Preview: ...\n\n{greeting}\n\n{body}\n\n{cta_text}\n\n{sign_off}`; ad_copy → grouped variants with format labels. Export from `renderers/__init__.py`.
-- [ ] `content_service.py`: refactor — generic `generate(user, request)` that dispatches to per-type prompt + schema + renderer via a registry (`_CONTENT_TYPE_REGISTRY: dict[ContentType, _ContentTypeBundle]`). Reuses the three-stage fallback unchanged.
-- [ ] Router: remove the Slice-1 gate; accept all four content types. Update the error message.
-- [ ] Frontend `CONTENT_TYPE_OPTIONS` in `lib/validation/generate.ts`: flip the three disabled tabs to `enabled: true`.
-- [ ] `generate-result.tsx`: per-type render. `rendered_text` already handles all four via the new renderers — no client-side branching needed unless the result panel wants type-specific affordances (e.g., copy hashtags separately for LinkedIn). Cuttable: leave plain markdown render.
-- [ ] Tests:
-  - Backend: 1 unit test per renderer + 1 per prompt module (snapshot the system/user). One integration test per content type (4 total, mock provider). Total: ~12 new tests.
-  - Frontend: 1 vitest update — ensure all four tabs are now enabled.
-- [ ] DEVLOG entry + README §6 `/content/generate` line widened.
-- [ ] PR title: `[Slice 2] Text gen widened: LinkedIn + email + ad copy`
+✅ **Shipped in [#137](https://github.com/Eslam93/MagnaCMS/pull/137).** Registry-based dispatch in `content_service.py` pairs each content type with its prompt module + Pydantic result model + renderer; three-stage parse fallback stays shared. Router projects stored JSONB back through the right per-type model. Frontend flips the three disabled tabs and widens `api.d.ts` to a `ContentResult` union. Tests: 204 backend pass (28 integration skip locally), 10 frontend pass, 36 infra jest pass, all stacks synth. Prettier `--check` warns locally on Windows CRLF; clean with `endOfLine=auto`, CI on Linux sees LF.
 
 ### Slice 4 — Dashboard (list + detail + soft delete)
 
