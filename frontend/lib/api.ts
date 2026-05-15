@@ -21,6 +21,12 @@
  *
  * In-flight refreshes are deduplicated: if multiple requests 401
  * simultaneously, they all wait on the single refresh promise.
+ *
+ * Body preservation: openapi-fetch consumes the request body when it
+ * dispatches. `request.clone()` in `onResponse` would return a clone
+ * whose body is also marked consumed — useless for retry. The
+ * `onRequest` hook captures the serialized body into a WeakMap keyed
+ * on the request before dispatch, and the retry path reads it back.
  */
 
 import createClient, { type Middleware } from "openapi-fetch";
@@ -28,6 +34,11 @@ import createClient, { type Middleware } from "openapi-fetch";
 import type { paths } from "@/types/api";
 
 const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+
+// Per-request cached body so the 401 retry has something to send. Keyed
+// by Request to avoid leaking references; entries are GC'd once the
+// caller drops the request.
+const requestBodyCache: WeakMap<Request, string> = new WeakMap();
 
 // Single-flight refresh — multiple concurrent 401s share one /auth/refresh
 // call. Resolves to true on success (caller retries) or false on failure.
@@ -66,6 +77,21 @@ const authMiddleware: Middleware = {
       if (token) {
         request.headers.set("authorization", `Bearer ${token}`);
       }
+      // Cache the body BEFORE openapi-fetch consumes it. The 401
+      // retry path reads from this cache. GET/HEAD have no body, so
+      // skip the read (request.clone().text() on a bodyless request
+      // returns "" but still costs a clone).
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        try {
+          const body = await request.clone().text();
+          requestBodyCache.set(request, body);
+        } catch {
+          // If the body can't be cloned (rare — already consumed by
+          // an upstream middleware), the retry simply won't have a
+          // body. The request fails on retry instead of corrupting
+          // state.
+        }
+      }
     }
     return request;
   },
@@ -93,7 +119,7 @@ const authMiddleware: Middleware = {
     const refreshed = await inflightRefresh;
     if (!refreshed) return response;
 
-    // Retry the original request with the fresh token.
+    // Retry the original request with the fresh token + cached body.
     const { useAuthStore } = await import("@/lib/auth-store");
     const newToken = useAuthStore.getState().accessToken;
     const retryHeaders = new Headers(request.headers);
@@ -101,7 +127,7 @@ const authMiddleware: Middleware = {
     const body =
       request.method === "GET" || request.method === "HEAD"
         ? undefined
-        : await request.clone().text();
+        : requestBodyCache.get(request);
     return fetch(request.url, {
       method: request.method,
       headers: retryHeaders,

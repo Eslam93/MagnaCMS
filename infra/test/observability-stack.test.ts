@@ -1,7 +1,15 @@
 /**
- * ObservabilityStack snapshot + resource-count tests.
+ * ObservabilityStack tests.
  *
- * Pins: 2 LogGroups (service + application), 14-day retention in dev.
+ * The stack is currently a placeholder — App Runner log-group
+ * pre-creation was removed in P2.12 (the names had no service-id, so
+ * App Runner ignored them and created its own without retention).
+ * Log-retention setup is now a post-deploy `aws logs put-retention-policy`
+ * step documented in DEPLOY.md §7a.
+ *
+ * The stack will gain content again in P11.6 (CloudWatch 5xx alarm
+ * + SNS topic). Until then these tests just assert it synths cleanly
+ * with no resources.
  */
 
 import { App } from "aws-cdk-lib";
@@ -23,22 +31,12 @@ describe("ObservabilityStack (dev)", () => {
     expect(template.toJSON()).toMatchSnapshot();
   });
 
-  it("provisions exactly two log groups (service + application)", () => {
-    template.resourceCountIs("AWS::Logs::LogGroup", 2);
+  it("provisions no log groups (pre-creation removed — names had no service-id)", () => {
+    template.resourceCountIs("AWS::Logs::LogGroup", 0);
   });
 
-  it("dev retention is 14 days", () => {
-    template.hasResourceProperties("AWS::Logs::LogGroup", {
-      RetentionInDays: 14,
-    });
-  });
-
-  it("log group names follow the /aws/apprunner/<service> convention", () => {
-    template.hasResourceProperties("AWS::Logs::LogGroup", {
-      LogGroupName: "/aws/apprunner/magnacms-dev-backend/service",
-    });
-    template.hasResourceProperties("AWS::Logs::LogGroup", {
-      LogGroupName: "/aws/apprunner/magnacms-dev-backend/application",
-    });
+  it("provisions no resources yet (P11.6 will add the 5xx alarm)", () => {
+    const resources = template.toJSON().Resources ?? {};
+    expect(Object.keys(resources)).toEqual([]);
   });
 });
