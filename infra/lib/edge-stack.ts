@@ -95,7 +95,7 @@ export class EdgeStack extends Stack {
     new CfnOutput(this, "AmplifyAppId", {
       value: this.amplifyApp.attrAppId,
       exportName: `${id}-amplify-app-id`,
-      description: "Amplify app ID — connect GitHub via console post-deploy",
+      description: "Amplify app ID - connect GitHub via console post-deploy",
     });
     new CfnOutput(this, "AmplifyDefaultDomain", {
       value: this.amplifyApp.attrDefaultDomain,

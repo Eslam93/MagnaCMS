@@ -20,7 +20,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 
 from pydantic import BeforeValidator, Field, SecretStr, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Environment(StrEnum):
@@ -43,7 +43,12 @@ def _split_csv(value: str | list[str]) -> list[str]:
     return value
 
 
-CSVList = Annotated[list[str], BeforeValidator(_split_csv)]
+# `NoDecode` opts the field out of pydantic-settings' default JSON-decoding
+# pass for complex types. Without it, env-var values like
+# `http://localhost:3000` (no JSON brackets) blow up before the
+# `BeforeValidator` below ever runs. With `NoDecode`, the raw string flows
+# straight into `_split_csv`, which handles both CSV and pre-parsed lists.
+CSVList = Annotated[list[str], NoDecode, BeforeValidator(_split_csv)]
 
 
 _PLACEHOLDER_PREFIXES = ("REPLACE_ME", "sk-proj-REPLACE", "dev-only-")

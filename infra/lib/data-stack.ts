@@ -93,7 +93,7 @@ export class DataStack extends Stack {
     });
     const pgParams = new ParameterGroup(this, "PgParams", {
       engine: pgEngine,
-      description: "Postgres parameter group — forces TLS on all connections",
+      description: "Postgres parameter group - forces TLS on all connections",
       parameters: {
         "rds.force_ssl": "1",
       },

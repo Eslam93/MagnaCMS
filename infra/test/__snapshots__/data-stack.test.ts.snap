@@ -319,7 +319,7 @@ exports[`DataStack (dev) matches snapshot 1`] = `
     },
     "PgParamsB57E4B90": {
       "Properties": {
-        "Description": "Postgres parameter group — forces TLS on all connections",
+        "Description": "Postgres parameter group - forces TLS on all connections",
         "Family": "postgres16",
         "Parameters": {
           "rds.force_ssl": "1",

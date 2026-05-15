@@ -79,7 +79,7 @@ export class NetworkStack extends Stack {
     this.sgRds.addIngressRule(
       Peer.anyIpv4(),
       Port.tcp(5432),
-      "PostgreSQL — auth + SSL is the gate (no App Runner prefix list available)",
+      "PostgreSQL - auth + SSL is the gate (no App Runner prefix list available)",
     );
 
     // --- ElastiCache (Redis) SG ---
@@ -93,6 +93,10 @@ export class NetworkStack extends Stack {
         "ElastiCache Redis: VPC-internal only (USE_REDIS=false until VPC connector lands)",
       allowAllOutbound: false,
     });
+    // Note: the SG `description` field above is allowed wider chars than
+    // ingress-rule descriptions; ingress descriptions reject em-dashes
+    // and many other Unicode punctuation marks. Keep ingress-rule
+    // descriptions ASCII-clean.
 
     new CfnOutput(this, "VpcId", {
       value: this.vpc.vpcId,
