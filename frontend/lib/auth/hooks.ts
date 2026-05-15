@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
@@ -65,6 +65,7 @@ export function useRegisterMutation() {
 
 export function useLogoutMutation() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const clearAccessToken = useAuthStore((s) => s.clearAccessToken);
 
   return useMutation({
@@ -74,6 +75,13 @@ export function useLogoutMutation() {
     },
     onSettled: () => {
       clearAccessToken();
+      // Wipe every cached query — `["auth", "me"]`, the dashboard
+      // lists, brand voices, etc. — so a second user signing in on
+      // the same browser never observes the first user's data while
+      // a stale query rehydrates. `clear()` is the bluntest option;
+      // selective removal would have to track every query key in
+      // the app.
+      queryClient.clear();
       router.push("/login");
     },
   });

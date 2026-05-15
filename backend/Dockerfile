@@ -4,7 +4,11 @@ ARG PYTHON_VERSION=3.12
 # ──────────────────────────────────────────────────────────────────────
 # Stage 1 — install dependencies via uv into a self-contained venv
 # ──────────────────────────────────────────────────────────────────────
-FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS builder
+# App Runner runs amd64; pinning here makes M-series local builds emit
+# the same architecture and stops "exec format error" surprises on
+# push. BuildKit's `--platform` flag in the deploy workflow reinforces
+# this at the CI layer.
+FROM --platform=linux/amd64 ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS builder
 
 WORKDIR /app
 ENV UV_LINK_MODE=copy \
@@ -25,7 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ──────────────────────────────────────────────────────────────────────
 # Stage 2 — runtime: minimal Python image + the prebuilt venv
 # ──────────────────────────────────────────────────────────────────────
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM --platform=linux/amd64 python:${PYTHON_VERSION}-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

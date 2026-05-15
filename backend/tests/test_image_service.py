@@ -62,16 +62,24 @@ class _RecordingResult:
 
 
 class _FakeStorage:
-    """Captures storage calls so tests assert on bytes-in / url-out."""
+    """Captures storage calls so tests assert on bytes-in / url-out.
+
+    Matches the production `IImageStorage` protocol: `store` returns
+    the key only; `public_url_for(key)` is the pure derivation. Tests
+    that previously asserted on a returned URL now drive through the
+    same projection path the router uses.
+    """
 
     def __init__(self, *, base_url: str = "http://test/img") -> None:
         self.calls: list[bytes] = []
         self._base_url = base_url
 
-    async def store(self, *, image_bytes: bytes, extension: str = "png") -> tuple[str, str]:
+    async def store(self, *, image_bytes: bytes, extension: str = "png") -> str:
         self.calls.append(image_bytes)
-        key = f"fake-{len(self.calls)}.{extension}"
-        return key, f"{self._base_url}/{key}"
+        return f"fake-{len(self.calls)}.{extension}"
+
+    def public_url_for(self, key: str) -> str:
+        return f"{self._base_url}/{key}"
 
 
 def _llm_returning(payload: dict[str, Any]) -> AsyncMock:

@@ -75,18 +75,50 @@ jobs:
             echo "migration_task_def=$MIGRATION_TASK_DEF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Capture previous :latest image digest for rollback
+        id: previous
+        run: |
+          # Record the digest currently behind `:latest` BEFORE we
+          # re-tag it. On smoke-test failure, an operator can
+          # `docker pull <digest>; docker tag <digest> ...:latest;
+          # docker push ...:latest; aws apprunner start-deployment` to
+          # roll back to the previous version without rebuilding.
+          PREV_DIGEST=$(aws ecr describe-images \
+            --repository-name "$(basename "${{ steps.resolve.outputs.ecr_uri }}")" \
+            --image-ids imageTag=latest \
+            --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "none")
+          echo "previous_digest=$PREV_DIGEST" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deployment manifest"
+            echo "- New image SHA: \`${GITHUB_SHA}\`"
+            echo "- Previous :latest digest: \`$PREV_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build + push backend image
         run: |
+          # Build with linux/amd64 explicitly — App Runner runs x86.
+          # M-series developers building locally would otherwise produce
+          # arm64 images that App Runner can't pull.
           aws ecr get-login-password --region us-east-1 \
             | docker login --username AWS --password-stdin "${{ steps.resolve.outputs.ecr_uri }}"
-          docker build -t "${{ steps.resolve.outputs.ecr_uri }}:${GITHUB_SHA}" \
+          docker buildx build --platform linux/amd64 \
+                       --provenance=false \
+                       --output=type=image,push=false \
+                       -t "${{ steps.resolve.outputs.ecr_uri }}:${GITHUB_SHA}" \
                        -t "${{ steps.resolve.outputs.ecr_uri }}:latest" \
+                       --load \
                        backend/
+          # Push the immutable SHA tag FIRST so it's recoverable even
+          # if the `:latest` push races with a concurrent deploy.
           docker push "${{ steps.resolve.outputs.ecr_uri }}:${GITHUB_SHA}"
           docker push "${{ steps.resolve.outputs.ecr_uri }}:latest"
 
       - name: Run Alembic migrations (Fargate one-off task)
-        if: ${{ github.event.inputs.run_migrations == 'true' }}
+        # Migrations gate everything downstream — App Runner is NOT
+        # deployed if `alembic upgrade head` exits non-zero. Step-level
+        # default failure behavior already enforces this, but the
+        # explicit `if:` here makes the dependency visible.
+        if: ${{ github.event.inputs.run_migrations == 'true' && success() }}
         run: |
           # ECS run-task against the magnacms-${env}-migrate task def.
           # Uses the public subnets from NetworkStack (read via tag).
@@ -114,11 +146,17 @@ jobs:
           fi
 
       - name: Trigger App Runner deployment
+        # Gated on `success()` so a failed migration aborts before we
+        # promote the new image into the running service. The previous
+        # step's failure would normally do this implicitly; the
+        # explicit `if:` documents the contract.
+        if: ${{ success() }}
         run: |
           DEPLOYMENT_ID=$(aws apprunner start-deployment \
             --service-arn "${{ steps.resolve.outputs.apprunner_arn }}" \
             --query 'OperationId' --output text)
           echo "Deployment started: $DEPLOYMENT_ID"
+          echo "::notice::App Runner deployment $DEPLOYMENT_ID for SHA ${GITHUB_SHA}"
 
       - name: Wait for App Runner to be RUNNING
         run: |

@@ -132,6 +132,29 @@ def supported_content_types() -> frozenset[ContentType]:
     return frozenset(_REGISTRY.keys())
 
 
+def project_result(
+    content_type: ContentType | str,
+    raw: dict[str, Any] | None,
+) -> ContentResult | None:
+    """Re-validate a stored JSONB row through the per-type Pydantic model.
+
+    Single source of truth for "given a row's content_type, which
+    Pydantic class projects its `result` JSONB for the wire?". Lives
+    in the service so adding a fifth content type only requires
+    appending to `_REGISTRY` — the router projector that used to
+    duplicate this knowledge has been dropped.
+
+    None passes through — that's the FAILED parse-status path where
+    `rendered_text` carries the raw model output and `result` is null
+    on the row.
+    """
+    if raw is None:
+        return None
+    ct = ContentType(content_type) if not isinstance(content_type, ContentType) else content_type
+    bundle = _REGISTRY[ct]
+    return bundle.result_model.model_validate(raw)  # type: ignore[return-value]
+
+
 # ── parse outcome ──────────────────────────────────────────────────────
 
 

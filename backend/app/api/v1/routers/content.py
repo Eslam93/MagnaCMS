@@ -11,31 +11,26 @@ from __future__ import annotations
 
 import uuid
 from math import ceil
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, status
-from pydantic import BaseModel
 
 from app.api.v1.deps import CurrentUser
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.request_context import get_request_id
 from app.db.enums import ContentType
+from app.db.models import GeneratedImage
 from app.db.session import DbSession
 from app.providers.factory import get_image_provider, get_llm_provider
 from app.repositories.content_repository import ContentRepository
 from app.repositories.image_repository import ImageRepository
 from app.schemas.content import (
-    AdCopyResult,
-    BlogPostResult,
     ContentDetailResponse,
     ContentListItem,
     ContentListResponse,
-    ContentResult,
-    EmailResult,
     GenerateRequest,
     GenerateResponse,
     GenerateUsage,
-    LinkedInPostResult,
     ListMeta,
     PaginationMeta,
 )
@@ -45,41 +40,16 @@ from app.schemas.image import (
     ImageGenerateResponse,
     ImageListResponse,
 )
-from app.services.content_service import ContentService
+from app.services.content_service import ContentService, project_result
 from app.services.image_service import ImageService
-from app.services.image_storage import build_image_storage
+from app.services.image_storage import IImageStorage, build_image_storage
 
 router = APIRouter(prefix="/content", tags=["content"])
-
-# Storage is open: `result` is JSONB. The router projects the stored
-# dict back through the right Pydantic model for the response envelope
-# so the OpenAPI contract stays strict per content type.
-_RESULT_PROJECTORS: dict[str, type[BaseModel]] = {
-    "blog_post": BlogPostResult,
-    "linkedin_post": LinkedInPostResult,
-    "email": EmailResult,
-    "ad_copy": AdCopyResult,
-}
 
 # Server-side preview length for the dashboard list. Trimming here keeps
 # wire weight bounded and means the FTS hit and the visible preview
 # always come from the same string.
 _PREVIEW_LEN = 200
-
-
-def _project_result(
-    content_type: str,
-    raw: dict[str, Any] | None,
-) -> ContentResult | None:
-    """Re-validate the stored JSONB against the per-type Pydantic model.
-
-    None passes through — that's the FAILED path where `rendered_text`
-    holds the raw model output and `result` was nulled on write.
-    """
-    if raw is None:
-        return None
-    model_cls = _RESULT_PROJECTORS[content_type]
-    return model_cls.model_validate(raw)  # type: ignore[return-value]
 
 
 def _build_preview(rendered_text: str) -> str:
@@ -90,6 +60,33 @@ def _build_preview(rendered_text: str) -> str:
     if len(rendered_text) <= _PREVIEW_LEN:
         return rendered_text
     return rendered_text[:_PREVIEW_LEN].rstrip() + "…"
+
+
+def _project_image(image: GeneratedImage, storage: IImageStorage) -> GeneratedImageResponse:
+    """Project a `generated_images` row to the wire.
+
+    `cdn_url` is computed fresh from the storage layer's
+    `public_url_for(key)` so a configuration change to
+    `IMAGES_CDN_BASE_URL` (e.g., the eventual S3 cutover) immediately
+    rewrites every row's URL — old rows don't need a backfill. The
+    persisted `cdn_url` column stays in sync at write time but is
+    treated as a cache, not the source of truth.
+    """
+    return GeneratedImageResponse(
+        id=image.id,
+        content_piece_id=image.content_piece_id,
+        style=image.style,
+        provider=image.provider,
+        model_id=image.model_id,
+        width=image.width,
+        height=image.height,
+        cdn_url=storage.public_url_for(image.s3_key),
+        image_prompt=image.image_prompt,
+        negative_prompt=image.negative_prompt,
+        cost_usd=image.cost_usd,
+        is_current=image.is_current,
+        created_at=image.created_at,
+    )
 
 
 @router.post(
@@ -117,7 +114,7 @@ async def generate(
     return GenerateResponse(
         content_id=piece.id,
         content_type=piece.content_type,
-        result=_project_result(piece.content_type.value, piece.result),
+        result=project_result(piece.content_type, piece.result),
         rendered_text=piece.rendered_text,
         result_parse_status=piece.result_parse_status,
         word_count=piece.word_count or 0,
@@ -204,7 +201,7 @@ async def get_content(
         topic=piece.topic,
         tone=piece.tone,
         target_audience=piece.target_audience,
-        result=_project_result(piece.content_type.value, piece.result),
+        result=project_result(piece.content_type, piece.result),
         rendered_text=piece.rendered_text,
         result_parse_status=piece.result_parse_status,
         word_count=piece.word_count or 0,
@@ -235,7 +232,7 @@ async def delete_content(
         topic=piece.topic,
         tone=piece.tone,
         target_audience=piece.target_audience,
-        result=_project_result(piece.content_type.value, piece.result),
+        result=project_result(piece.content_type, piece.result),
         rendered_text=piece.rendered_text,
         result_parse_status=piece.result_parse_status,
         word_count=piece.word_count or 0,
@@ -261,11 +258,12 @@ async def generate_image(
     previously-current image for the piece is flipped to non-current
     inside the same transaction (partial unique index enforces the
     invariant)."""
+    storage = build_image_storage()
     service = ImageService(
         db,
         llm_provider=get_llm_provider(),
         image_provider=get_image_provider(),
-        storage=build_image_storage(),
+        storage=storage,
     )
     image = await service.generate_for_content(
         user=current_user,
@@ -273,9 +271,7 @@ async def generate_image(
         style=body.style,
     )
     await db.commit()
-    return ImageGenerateResponse(
-        image=GeneratedImageResponse.model_validate(image, from_attributes=True),
-    )
+    return ImageGenerateResponse(image=_project_image(image, storage))
 
 
 @router.get(
@@ -294,8 +290,9 @@ async def list_images(
         raise NotFoundError("Content not found.", code="CONTENT_NOT_FOUND")
     image_repo = ImageRepository(db)
     rows = await image_repo.list_for_content(piece.id)
+    storage = build_image_storage()
     return ImageListResponse(
-        data=[GeneratedImageResponse.model_validate(row, from_attributes=True) for row in rows],
+        data=[_project_image(row, storage) for row in rows],
     )
 
 
@@ -313,12 +310,13 @@ async def restore_content(
     # Distinguish "no such row" from "outside restore window" by
     # checking the include-deleted lookup first. Both surface to the
     # client as a structured error so the toast can speak in plain
-    # terms.
+    # terms. The state-conflict cases return 409 (ConflictError) so a
+    # client doesn't mistake them for input-validation problems.
     piece_inc_deleted = await repo.get_for_user_include_deleted(content_id, current_user.id)
     if piece_inc_deleted is None:
         raise NotFoundError("Content not found.", code="CONTENT_NOT_FOUND")
     if piece_inc_deleted.deleted_at is None:
-        raise ValidationError(
+        raise ConflictError(
             "Content is already active.",
             code="CONTENT_NOT_DELETED",
         )
@@ -326,7 +324,7 @@ async def restore_content(
     piece = await repo.restore(content_id, current_user.id)
     if piece is None:
         # The row was deleted but outside the 24-hour window.
-        raise ValidationError(
+        raise ConflictError(
             "Restore window has expired.",
             code="RESTORE_WINDOW_EXPIRED",
         )
@@ -337,7 +335,7 @@ async def restore_content(
         topic=piece.topic,
         tone=piece.tone,
         target_audience=piece.target_audience,
-        result=_project_result(piece.content_type.value, piece.result),
+        result=project_result(piece.content_type, piece.result),
         rendered_text=piece.rendered_text,
         result_parse_status=piece.result_parse_status,
         word_count=piece.word_count or 0,

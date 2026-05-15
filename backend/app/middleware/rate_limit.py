@@ -1,11 +1,13 @@
 """Per-path, per-IP in-memory rate limit middleware.
 
-MVP-grade: a fixed-window counter keyed on `(path, ip)`. Survives until
-P11.3 swaps in a Redis-backed sliding window that works across
-processes and outlives restarts.
+MVP-grade: a fixed-window counter keyed on `(rule_key, ip)` where
+`rule_key` is either an exact-match path (`/api/v1/auth/login`) or the
+pattern label of a regex-matched rule (`pattern:image_generate`).
+Survives until P11.3 swaps in a Redis-backed sliding window that works
+across processes and outlives restarts.
 
 Scope:
-  - Only the configured paths get rate-limited; everything else is a
+  - Only the configured rules trigger limiting; everything else is a
     pass-through.
   - The "ip" identity is the real TCP peer (`scope["client"]`), NOT a
     forwarded-for header. Until we sit behind a proxy with a trusted
@@ -19,7 +21,9 @@ Scope:
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from dataclasses import dataclass
 from time import monotonic
 from typing import Final
 
@@ -30,15 +34,30 @@ from app.core.request_context import get_request_id
 # Window length. Matches the brief's "per minute" framing.
 _WINDOW_SECONDS: Final[int] = 60
 
-# Hard cap on the number of (path, ip) buckets we'll keep in memory.
+# Hard cap on the number of (rule_key, ip) buckets we'll keep in memory.
 # Without this, an attacker spamming distinct source IPs would balloon
 # memory. When the cap is hit, the LEAST-recently-touched key gets
 # evicted. P11.3's Redis version makes this irrelevant.
 _MAX_BUCKETS: Final[int] = 50_000
 
 
+@dataclass(frozen=True)
+class RateLimitRule:
+    """A regex-matched rule for paths that vary at runtime (e.g.
+    `/api/v1/content/<uuid>/image`).
+
+    `key` is the bucket label persisted across requests — distinct
+    rules must have distinct keys so two endpoints can't share the same
+    counter by accident.
+    """
+
+    pattern: re.Pattern[str]
+    limit: int
+    key: str
+
+
 class _Bucket:
-    """A per-(path, ip) sliding-window timestamp list plus an
+    """A per-(rule_key, ip) sliding-window timestamp list plus an
     insertion-order hint for LRU eviction."""
 
     __slots__ = ("last_touch", "timestamps")
@@ -89,15 +108,24 @@ def _envelope_429(retry_after: int) -> bytes:
 
 
 class RateLimitMiddleware:
-    """ASGI middleware enforcing per-(path, ip) request budgets.
+    """ASGI middleware enforcing per-(rule, ip) request budgets.
 
-    Construct with a `rules` dict mapping exact path strings to a
-    requests-per-window cap. Paths not in the dict are not limited.
+    Construct with `rules` (exact-path → cap) and/or `patterns` (regex
+    rules for dynamic paths). Exact-path lookup runs first; on a miss
+    the patterns are scanned in order and the first match wins. Paths
+    matched by neither are pass-through.
     """
 
-    def __init__(self, app: ASGIApp, *, rules: dict[str, int]) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        rules: dict[str, int] | None = None,
+        patterns: list[RateLimitRule] | None = None,
+    ) -> None:
         self._app = app
-        self._rules = rules
+        self._rules = rules or {}
+        self._patterns = patterns or []
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -105,17 +133,18 @@ class RateLimitMiddleware:
             return
 
         path = scope.get("path", "")
-        limit = self._rules.get(path)
-        if limit is None:
+        resolved = self._resolve_rule(path)
+        if resolved is None:
             await self._app(scope, receive, send)
             return
+        rule_key, limit = resolved
 
         client = scope.get("client")
         ip = client[0] if client else "unknown"
 
         now = monotonic()
-        key = (path, ip)
-        bucket = _BUCKETS[key]
+        bucket_key = (rule_key, ip)
+        bucket = _BUCKETS[bucket_key]
         bucket.last_touch = now
 
         # Prune timestamps that fell out of the window.
@@ -132,6 +161,19 @@ class RateLimitMiddleware:
         bucket.timestamps.append(now)
         _prune_oldest_buckets_if_over_cap()
         await self._app(scope, receive, send)
+
+    def _resolve_rule(self, path: str) -> tuple[str, int] | None:
+        """Return `(bucket_key, limit)` for `path`, or None if no rule
+        matches. Exact-path lookup wins over patterns to keep auth
+        routes' identity stable across rule changes.
+        """
+        exact = self._rules.get(path)
+        if exact is not None:
+            return path, exact
+        for rule in self._patterns:
+            if rule.pattern.match(path):
+                return rule.key, rule.limit
+        return None
 
     @staticmethod
     async def _send_429(send: Send, *, body: bytes, retry_after: int) -> None:

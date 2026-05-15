@@ -27,7 +27,6 @@ describe("Full app synthesis (dev)", () => {
     cfg,
     vpc: network.vpc,
     sgRds: network.sgRds,
-    sgRedis: network.sgRedis,
   });
   const compute = new ComputeStack(app, "magnacms-dev-compute", {
     env,

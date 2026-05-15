@@ -293,6 +293,35 @@ class Settings(BaseSettings):
             )
         return self
 
+    # NOTE: this validator runs LAST (declaration order matters for
+    # Pydantic v2 `model_validator(mode="after")`). Putting it after
+    # the secrets / provider-mode checks keeps the existing tests
+    # that rely on those specific error messages firing first.
+    @model_validator(mode="after")
+    def _reject_localhost_cors_outside_local(self) -> Settings:
+        """Prevent shipping the default `http://localhost:3000` CORS
+        origin in a hosted environment. The CDK compute-stack ships an
+        explicit localhost value that's intended to be overridden
+        post-deploy; without this gate a stale env would let the
+        backend run with CORS that blocks every cross-origin call from
+        the real frontend.
+        """
+        if self.environment == Environment.LOCAL:
+            return self
+        offenders = [
+            origin
+            for origin in self.cors_origins
+            if "localhost" in origin or "127.0.0.1" in origin
+        ]
+        if offenders:
+            raise ValueError(
+                "CORS_ORIGINS contains localhost entries that won't work in "
+                f"environment={self.environment.value}: {offenders}. "
+                "Update CORS_ORIGINS to the actual frontend origin "
+                "(e.g., https://main.dew27gk9z09jh.amplifyapp.com)."
+            )
+        return self
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

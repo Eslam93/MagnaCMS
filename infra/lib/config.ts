@@ -58,8 +58,14 @@ const DEV_CONFIG: EnvConfig = {
   rdsBackupRetention: Duration.days(0), // off in dev to keep tear-down clean
   apprunnerMinInstances: 1,
   apprunnerMaxInstances: 3,
-  apprunnerCpu: "0.25 vCPU",
-  apprunnerMemory: "0.5 GB",
+  // Bumped from 0.25 vCPU / 0.5 GB after the hardening-pass review.
+  // gpt-image-1 responses carry a 1-3 MB base64 PNG; with FastAPI +
+  // Pydantic + the OpenAI SDK already resident (~200 MB), the
+  // previous size was OOM-adjacent under any concurrent image-gen
+  // load. 1 vCPU / 2 GB leaves headroom without changing the App
+  // Runner pricing tier dramatically.
+  apprunnerCpu: "1 vCPU",
+  apprunnerMemory: "2 GB",
   logRetentionDays: 14,
   amplifyAppName: "magnacms-dev",
   imagesBucketBaseName: "ai-content-images",
