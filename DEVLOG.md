@@ -4,6 +4,31 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-15 — Demo polish: seed script, account page, READMEs
+
+Five feature slices shipped in 12 hours of local-first work. The final polish pass closes three small loose ends so the deployed demo lands on its feet:
+
+### A demo user with real rows
+
+`python -m app.scripts.seed` from [`backend/app/scripts/seed.py`](backend/app/scripts/seed.py) creates `demo@magnacms.dev` / `DemoPass123` plus one brand voice, three content pieces (blog / LinkedIn / email — using the brand voice), one image per piece, and one improvement. The script is idempotent: re-running checks for each row by a natural key (email for the user, name for the voice, topic for the pieces) and skips what already exists. Everything goes through the same services + repositories the live app uses, with `MockLLMProvider` + `MockImageProvider` forced in-script so it runs offline and zero-cost. The dashboard, generate-result, and improver pages all render real rows the first time the demo user signs in — no "empty state, please generate something to see the UI" moment.
+
+### Account page replaces the settings stub
+
+The protected-layout sidebar links to `/settings`. Shipping that link with a "real settings page lands later" placeholder felt wrong for the demo; the new page reads from `/auth/me` and shows email + full name + member-since. Nothing editable — full preferences are still deferred — but the route stops looking like work that wasn't done. Same minor refresh for `/usage` (explains the deferral with a pointer to where the cost data actually lives today: on each content_piece and improvement row, visible from the dashboard detail).
+
+### Live URLs in the README §1
+
+The README now lists the App Runner URL, the live `/docs` swagger, and the demo credentials at the top. Frontend URL is marked pending until the Amplify zip lands. The "what works today" answer fits in five lines instead of "clone and run locally."
+
+### What didn't ship in this window
+
+- Frontend zip upload to Amplify (one-click, but it's the user's hands)
+- The six deploy-time fixes documented in SLICE_PLAN §4 — em-dash + NoDecode are already in the repo; migration env + Fargate SG land at deploy-prep time
+- S3 image-storage adapter (the `IImageStorage` slot is reserved; the local-disk path runs in dev and currently in App Runner too, served by the FastAPI `/local-images` static mount)
+- Streaming SSE on the improver and per-account rate limiting — both explicitly in the cut list
+
+---
+
 ## 2026-05-15 — Slice 6: brand voice mini — CRUD plus prompt injection
 
 Each generation now optionally pulls from a user-owned style preset. Slice 6 ships the smallest CRUD layer that earns the integration: `/brand-voices` list / create / detail / patch / delete, plus an optional `brand_voice_id` on every `POST /content/generate` that injects the voice's tone descriptors, banned phrases, audience hint, and sample copy into the user prompt. Persisted `user_prompt_snapshot` carries the full injected text so generations are reproducible against the exact prompt that produced them.
