@@ -6,11 +6,20 @@ deterministically against the canned payloads in MockLLMProvider.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.providers.factory import reset_provider_cache
 from app.providers.llm.mock import MockLLMProvider
+
+# See test_content_dashboard._CREATE_GAP_S — same flakiness rationale.
+# The list endpoint's tiebreaker (`ORDER BY created_at DESC, id DESC`)
+# decides by random UUID when timestamps tie at the microsecond, and
+# the test asserts strict insert-order. A 20ms gap between creates
+# guarantees distinct `created_at`.
+_CREATE_GAP_S = 0.02
 
 
 @pytest.fixture(autouse=True)
@@ -95,6 +104,7 @@ async def test_list_returns_newest_first_with_previews(
 ) -> None:
     token = await _register(integration_client)
     first = await _improve(integration_client, token)
+    await asyncio.sleep(_CREATE_GAP_S)
     second = await _improve(integration_client, token, goal="shorter")
 
     response = await integration_client.get(

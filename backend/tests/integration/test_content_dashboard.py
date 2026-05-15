@@ -9,6 +9,7 @@ row anyway.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -18,6 +19,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ContentPiece
 from app.providers.factory import reset_provider_cache
 from app.providers.llm.mock import MockLLMProvider
+
+# When the dashboard list test asserts strict newest-first ordering by
+# `_generate` call sequence, the rows need DISTINCT `created_at`
+# values. Postgres `now()` is microsecond-resolution and on fast CI
+# runners three sequential mock-LLM API calls can land in the same
+# microsecond, which makes the dashboard repository's tiebreaker
+# (`ORDER BY created_at DESC, id DESC`, see PR #145) decide ordering
+# by random UUID bytes instead of insert order. Forcing a small gap
+# between creates is cheaper than adding a serial column to the
+# schema and matches real-world usage (humans don't click that fast).
+_CREATE_GAP_S = 0.02
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +72,9 @@ async def test_list_returns_paginated_envelope_newest_first(
 ) -> None:
     token = await _register_and_login(integration_client)
     first = await _generate(integration_client, token, topic="Topic alpha")
+    await asyncio.sleep(_CREATE_GAP_S)
     second = await _generate(integration_client, token, topic="Topic beta")
+    await asyncio.sleep(_CREATE_GAP_S)
     third = await _generate(integration_client, token, topic="Topic gamma")
 
     response = await integration_client.get(
