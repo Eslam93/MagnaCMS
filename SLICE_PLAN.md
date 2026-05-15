@@ -2,7 +2,7 @@
 
 > **This file is the operating manual for the current Claude Code session and any successor sessions (compaction, dispatcher pattern, fresh context).** Read this top-to-bottom before editing code. When state changes (a slice merges, a deploy fact shifts, a known issue is resolved), update this file in the same commit.
 
-**Last updated:** 2026-05-15 (after Slice 3 merge — image generation, two providers, local-disk storage).
+**Last updated:** 2026-05-15 (after Slice 5 merge — improver chain shipped).
 
 ---
 
@@ -15,9 +15,10 @@
 | Slice 2 — Text gen widened (LinkedIn + email + ad copy) | ✅ shipped in [#137](https://github.com/Eslam93/MagnaCMS/pull/137), merged into main |
 | Slice 4 — Dashboard (list + detail + soft delete) | ✅ shipped in [#138](https://github.com/Eslam93/MagnaCMS/pull/138), merged into main |
 | Slice 3 — Image generation (gpt-image-1 + local storage) | ✅ shipped in [#139](https://github.com/Eslam93/MagnaCMS/pull/139), merged into main |
+| Slice 5 — Improver (analyze + rewrite + side-by-side diff) | ✅ shipped in [#140](https://github.com/Eslam93/MagnaCMS/pull/140), merged into main |
 | Live AWS deploy | ✅ partial — backend RUNNING, DB migrated, **frontend zip built but not yet uploaded**. Image S3 swap deferred to deploy batch. |
 | Deploy-time fixes (em-dash, NoDecode, migration env, Fargate SG) | em-dash + NoDecode: code in repo. Migration env + SG: documented in §4 as deploy-time TODOs (band-aided live, CDK code unchanged). |
-| Remaining slices | 5, 6 (in that order — see §3 for rationale) |
+| Remaining slices | 6 (then polish) |
 | Time budget | **12 hours of local-first feature work, then 1-2h batch deploy + polish at the end of 24h.** |
 
 ### Live deploy snapshot (preserve — do NOT redeploy in this 12h window)
@@ -81,25 +82,7 @@ Order: **2 → 4 → 3 → 5 → 6**. Rationale: Slice 4 (dashboard) before Slic
 
 ### Slice 5 — Improver
 
-**Branch:** `slice-5/improver`. **Budget:** ~2h.
-
-Done when:
-- [ ] Backend:
-  - `backend/app/prompts/improver.py` — two prompts (analyze + rewrite) per §7.6 of brief; `ImproverGoal` enum already exists in `db/enums.py`.
-  - `backend/app/schemas/improvement.py` — `ImproveRequest`, `ImproveResponse` (mirrors §7.6 JSON shape: `improved_text`, `explanation`, `changes_summary`).
-  - `backend/app/services/improver_service.py` — two-call chain. Call 1 returns `{issues, planned_changes}`; Call 2 receives the planned changes and returns the final `ImproveResponse` JSON. Same three-stage fallback as content service.
-  - `backend/app/repositories/improvement_repository.py` — `create`, `list_for_user`, `get_for_user`, `soft_delete`.
-  - `POST /api/v1/improve` — non-streaming (brief explicitly allows non-streaming).
-  - `GET /api/v1/improvements`, `GET /api/v1/improvements/:id`, `DELETE /api/v1/improvements/:id`.
-- [ ] Frontend `app/(protected)/improve/page.tsx`:
-  - Replace stub with full form: textarea for `original_text`, goal selector (5 options), conditional `new_audience` field for `audience_rewrite`.
-  - Result panel: side-by-side diff view of original vs improved. Use a tiny diff lib (e.g., `diff` from npm) OR a simpler two-pane "before / after" view. Cuttable: skip the diff and just show two panels.
-  - Show `explanation` bullets below the diff. Show `changes_summary` as a small metadata block (length change %, tone shift, etc.).
-- [ ] Tests:
-  - Backend: unit tests for both calls in the chain (mocked LLM with canned responses already in `MockLLMProvider`'s `improver_analysis` + `improver_rewrite` keys). Integration test for the endpoint.
-  - Frontend: 1 vitest covering form submission + result render.
-- [ ] DEVLOG; README §6 update.
-- [ ] PR title: `[Slice 5] Improver: analyze → rewrite chain with side-by-side diff`
+✅ **Shipped in [#140](https://github.com/Eslam93/MagnaCMS/pull/140).** Two-call chain: analyze returns `{ issues, planned_changes }`, rewrite consumes the plan and returns `{ improved_text, explanation, changes_summary }`. Each stage has independent three-stage parse fallback; tokens + cost sum across up to four calls. New router `improve.py` with POST /improve plus the dashboard CRUD. Frontend `/improve` page ships the goal-aware form + two-pane original/improved diff + explanation + changes_summary card. Tests: 213 backend pass (+5 unit), 6 integration locally skip; 23 frontend pass (+4 ImproveForm).
 
 ### Slice 6 — Brand voice (mini)
 
