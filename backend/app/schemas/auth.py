@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 from app.core.security import (
     PasswordTooWeakError,
@@ -33,14 +34,16 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def _enforce_strength(cls, value: str) -> str:
-        # Delegate to the canonical implementation in `core/security`.
-        # The auth router maps the surfaced ValidationError to the
-        # WEAK_PASSWORD application error code; here we only need
-        # Pydantic to fail with a useful message.
+        # Use a distinct PydanticCustomError type so the validation
+        # exception handler in `core/exceptions.py` can remap the
+        # response envelope's `error.code` to `WEAK_PASSWORD` instead
+        # of the generic `VALIDATION_FAILED`. The frontend (and existing
+        # integration tests) rely on the specific code to distinguish
+        # weak-password failures from other 422s.
         try:
             validate_password_strength(value)
         except PasswordTooWeakError as exc:
-            raise ValueError(str(exc)) from exc
+            raise PydanticCustomError("weak_password", str(exc)) from exc
         return value
 
 

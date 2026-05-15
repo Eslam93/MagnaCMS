@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.enums import ContentType
@@ -128,8 +128,14 @@ class ContentRepository:
         offset = max(0, (page - 1) * page_size)
         list_stmt = (
             select(ContentPiece)
+            # `id DESC` tiebreaker keeps ordering deterministic when
+            # multiple rows share a `created_at` value (rapid inserts
+            # in tests, or any same-microsecond write under real load).
+            # Without it, Postgres returns ties in physical-disk order
+            # — usually insert order — so a `LIMIT` clause can cut the
+            # newest rows and return the oldest instead.
             .where(*base_filters)
-            .order_by(text("created_at DESC"))
+            .order_by(ContentPiece.created_at.desc(), ContentPiece.id.desc())
             .offset(offset)
             .limit(page_size)
         )

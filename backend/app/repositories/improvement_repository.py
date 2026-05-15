@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Improvement
@@ -58,7 +58,10 @@ class ImprovementRepository:
                 Improvement.user_id == user_id,
                 Improvement.deleted_at.is_(None),
             )
-            .order_by(text("created_at DESC"))
+            # `id DESC` tiebreaker — see content_repository.list_for_user
+            # for the rationale. Same-microsecond `created_at` ties
+            # would otherwise be ordered by physical disk position.
+            .order_by(Improvement.created_at.desc(), Improvement.id.desc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

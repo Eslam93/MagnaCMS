@@ -153,12 +153,26 @@ async def validation_exception_handler(
     _: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
+    errors = exc.errors()
+    # If a Pydantic `PydanticCustomError` flagged a weak-password
+    # validation failure on /auth/register, surface the specific
+    # WEAK_PASSWORD code (frontend + integration tests depend on it).
+    # `field_validator`s in `schemas/auth.py` raise the distinct error
+    # type; everything else maps to the generic VALIDATION_FAILED.
+    code = "VALIDATION_FAILED"
+    message = "Request validation failed."
+    if any(err.get("type") == "weak_password" for err in errors):
+        code = "WEAK_PASSWORD"
+        message = next(
+            (err.get("msg", message) for err in errors if err.get("type") == "weak_password"),
+            message,
+        )
     return JSONResponse(
         status_code=422,
         content=_envelope(
-            code="VALIDATION_FAILED",
-            message="Request validation failed.",
-            details={"errors": jsonable_encoder(exc.errors())},
+            code=code,
+            message=message,
+            details={"errors": jsonable_encoder(errors)},
         ),
     )
 
