@@ -10,7 +10,14 @@ A production-grade SaaS that helps marketers generate, manage, and improve marke
 
 ## 1. Live demo
 
-_Coming soon._ The deployed URL and a seeded demo account will appear here once the backend lands on AWS.
+| | |
+|---|---|
+| Backend API | <https://grsv8u4uit.us-east-1.awsapprunner.com> (health: `/api/v1/health`) |
+| API docs | <https://grsv8u4uit.us-east-1.awsapprunner.com/docs> (Swagger UI) |
+| Frontend | _Coming up — Amplify zip awaiting one-click upload._ Until then, run locally and point it at the deployed API via `NEXT_PUBLIC_API_BASE_URL`. |
+| Demo credentials | `demo@magnacms.dev` / `DemoPass123` |
+
+The demo account is seeded with one brand voice, three content pieces (blog / LinkedIn / email), one image per piece, and one improvement so the dashboard and detail views render real rows immediately. Seed it from scratch with `python -m app.scripts.seed` from `backend/`.
 
 ## 2. What it does
 
