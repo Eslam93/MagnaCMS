@@ -107,11 +107,26 @@ Full rationale and key trade-offs: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## 6. API documentation
 
-Once deployed, the OpenAPI 3.1 spec is auto-published:
+FastAPI generates an OpenAPI 3.1 spec from the route signatures. The
+live UI is **only exposed in `local` and `dev`** environments — the
+`staging` and `production` builds hide `/docs`, `/redoc`, and
+`/openapi.json` so the API surface isn't enumerable from the public
+internet (see [`app/main.py`](./backend/app/main.py)).
 
-- **Swagger UI:** `<api-url>/docs`
-- **ReDoc:** `<api-url>/redoc`
-- **Raw spec:** `<api-url>/openapi.json`
+- **Local / dev only:**
+  - Swagger UI: `<api-url>/docs`
+  - ReDoc: `<api-url>/redoc`
+  - Raw spec: `<api-url>/openapi.json`
+- **Staging / production:** live docs are disabled. Dump the spec from
+  the source tree instead:
+
+  ```bash
+  uv run python -c "import json; from app.main import app; \
+    print(json.dumps(app.openapi(), indent=2))" > openapi.json
+  ```
+
+  Load the resulting `openapi.json` into a local Swagger viewer or any
+  OpenAPI tool.
 
 ### Available today
 
@@ -122,7 +137,7 @@ Once deployed, the OpenAPI 3.1 spec is auto-published:
 | Images | `POST /content/:id/image` (generate or regenerate), `GET /content/:id/images` (every version, newest first) |
 | Improver | `POST /improve` (analyze → rewrite), `GET /improvements`, `GET /improvements/:id`, `DELETE /improvements/:id` |
 | Brand voices | `GET /brand-voices`, `POST /brand-voices`, `GET /brand-voices/:id`, `PATCH /brand-voices/:id`, `DELETE /brand-voices/:id` |
-| System | `GET /health`, `GET /openapi.json`, `GET /docs`, `GET /redoc` |
+| System | `GET /health` (always on); `GET /openapi.json`, `GET /docs`, `GET /redoc` (local/dev only — gated in `app/main.py`) |
 
 ### Planned
 

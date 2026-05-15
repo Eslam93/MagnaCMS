@@ -30,23 +30,28 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     """Return the process-wide async engine, creating it on first call.
 
-    Pool sizing aims to cover the App Runner instance's default
-    MaxConcurrency=100 without forcing every request to queue on the
-    DB. `pool_size=15, max_overflow=20` → 35 max concurrent
-    connections per instance. Image generation no longer holds a
-    connection across upstream calls (see `image_service` + the
-    `NOWAIT` lock in `ContentRepository.get_for_user`), so 35 is
-    comfortable headroom — and RDS `db.t4g.micro` defaults to
-    `max_connections ≈ 87`, so a min=1/max=3 App Runner fleet still
-    leaves room for psql sessions + migrations.
+    Pool sizing is bounded by RDS `db.t4g.micro`'s `max_connections ≈
+    87`. With App Runner pinned to 3 instances by the autoscaling
+    config in `infra/lib/compute-stack.ts`, `pool_size=10,
+    max_overflow=10` → 20 max concurrent connections per instance, so
+    a fully-scaled fleet uses up to 60. That leaves ~25 headroom for
+    Alembic migration tasks, psql admin sessions, and the RDS
+    Performance Insights collector.
+
+    The image-regen NOWAIT lock (see `image_service` +
+    `ContentRepository.get_for_user`) makes the LOSING request release
+    its connection immediately, but the WINNER still holds the row
+    lock — and therefore the DB connection — across the LLM-prompt
+    call, image-provider call, and storage upload. Sizing assumes a
+    handful of concurrent image generations per instance, not dozens.
     """
     global _engine
     if _engine is None:
         settings = get_settings()
         _engine = create_async_engine(
             settings.database_url,
-            pool_size=15,
-            max_overflow=20,
+            pool_size=10,
+            max_overflow=10,
             pool_pre_ping=True,
             pool_recycle=3600,
             future=True,

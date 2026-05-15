@@ -8,10 +8,13 @@ attacker page can fire `fetch("/api/v1/auth/refresh", { credentials:
 endpoint, a state change with the victim's identity.
 
 This middleware enforces an Origin / Sec-Fetch-Site allowlist on the
-small set of state-changing routes that authenticate purely via the
-refresh cookie (`/auth/refresh`, `/auth/logout`). Bearer-authenticated
-routes are not protected here because the access token isn't cookie-
-borne — browsers won't auto-attach it from an attacker origin.
+four routes that touch the refresh cookie: `/auth/register` and
+`/auth/login` (which ISSUE the cookie — login CSRF is rare but real,
+e.g. attacker forces a victim's browser onto the attacker's account),
+plus `/auth/refresh` and `/auth/logout` (which AUTHENTICATE via the
+cookie). Bearer-authenticated routes are not protected here because the
+access token isn't cookie-borne — browsers won't auto-attach it from
+an attacker origin. The full path set is `_PROTECTED_PATHS` below.
 
 Allowed shapes for a request to pass:
   - No `Origin` header at all (curl, server-to-server) — accepted.

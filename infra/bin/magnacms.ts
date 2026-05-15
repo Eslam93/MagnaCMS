@@ -26,14 +26,19 @@
  * tags; today that's the App Runner URL + `/local-images` until the
  * S3 + CloudFront adapter ships.
  *
- * Synth aborts if either is missing for a non-local env unless the
- * escape hatch `-c allow_synthetic_endpoints=true` is set — that
- * mode emits clearly-synthetic placeholders so a bootstrap deploy
- * can run before the real Amplify URL is known. The placeholders
- * pass the Settings validator but produce a loud user-visible
- * failure on the first request, which is the point: deploy-time
- * crashes are easy to diagnose; runtime "everything is broken
- * silently" is not.
+ * Both values are validated by `resolveEndpointContext` (strict: https
+ * only, no loopback hosts, no `.invalid` TLD). Synth aborts on bad
+ * shape — see `lib/endpoint-context.ts` for the rule set.
+ *
+ * The escape hatch `-c allow_synthetic_endpoints=true` lets a bootstrap
+ * deploy run before the real Amplify URL is known. In that mode the
+ * resolver fills missing values with clearly-synthetic placeholders
+ * (`https://magnacms-bootstrap.invalid`), the app prints a loud CDK
+ * warning, and every resource is tagged `synthetic-endpoints=true` so
+ * the placeholder state is visible from the CloudFormation console.
+ * The placeholders pass the backend's `Settings` validator but produce
+ * a loud user-visible failure on the first real request — exactly the
+ * intended trade.
  */
 
 import "source-map-support/register";
@@ -43,6 +48,10 @@ import { ComputeStack } from "../lib/compute-stack";
 import { loadConfig } from "../lib/config";
 import { DataStack } from "../lib/data-stack";
 import { EdgeStack } from "../lib/edge-stack";
+import {
+  resolveEndpointContext,
+  type EndpointContextInput,
+} from "../lib/endpoint-context";
 import { NetworkStack } from "../lib/network-stack";
 import { ObservabilityStack } from "../lib/observability-stack";
 
@@ -61,34 +70,37 @@ cdk.Tags.of(app).add("environment", cfg.envName);
 cdk.Tags.of(app).add("managed-by", "cdk");
 
 // --- Resolve required context for non-local envs ---
-const allowSynthetic =
-  app.node.tryGetContext("allow_synthetic_endpoints") === "true" ||
-  app.node.tryGetContext("allow_synthetic_endpoints") === true;
+const allowSyntheticRaw = app.node.tryGetContext("allow_synthetic_endpoints");
+const allowSyntheticEndpoints =
+  allowSyntheticRaw === "true" || allowSyntheticRaw === true;
 
-function requireContext(key: string, syntheticDefault: string): string {
-  const supplied = app.node.tryGetContext(key);
-  if (typeof supplied === "string" && supplied.length > 0) {
-    return supplied;
-  }
-  if (allowSynthetic) {
-    return syntheticDefault;
-  }
-  throw new Error(
-    `[CDK] Missing required context '${key}'. ` +
-      `Pass '-c ${key}=...' on cdk synth/deploy, ` +
-      `or set '-c allow_synthetic_endpoints=true' to deploy with a ` +
-      `clearly-synthetic placeholder (intended for first-bootstrap only).`,
+const corsOriginsCtx = app.node.tryGetContext("cors_origins");
+const imagesCdnBaseUrlCtx = app.node.tryGetContext("images_cdn_base_url");
+
+const resolverInput: EndpointContextInput = {
+  corsOrigins: typeof corsOriginsCtx === "string" ? corsOriginsCtx : undefined,
+  imagesCdnBaseUrl:
+    typeof imagesCdnBaseUrlCtx === "string" ? imagesCdnBaseUrlCtx : undefined,
+  allowSyntheticEndpoints,
+};
+
+const { corsOrigins, imagesCdnBaseUrl, syntheticEndpointsUsed } =
+  resolveEndpointContext(resolverInput);
+
+if (syntheticEndpointsUsed) {
+  // Surface the placeholder state two ways: as an `Annotations.addWarning`
+  // (CDK prints these at the end of synth in yellow) and as a stack tag
+  // that lights up in the CloudFormation console. A deploy that ships
+  // synthetic endpoints will not produce a working app on the first
+  // request, so the operator must see this immediately.
+  cdk.Annotations.of(app).addWarning(
+    "[MagnaCMS] allow_synthetic_endpoints=true: CORS_ORIGINS and/or " +
+      "IMAGES_CDN_BASE_URL are populated from placeholder values. The " +
+      "deployed backend will reject browser requests until you redeploy " +
+      "with real CDK context. This mode is for first-bootstrap only.",
   );
+  cdk.Tags.of(app).add("synthetic-endpoints", "true");
 }
-
-const corsOrigins = requireContext(
-  "cors_origins",
-  "https://magnacms-bootstrap.invalid",
-);
-const imagesCdnBaseUrl = requireContext(
-  "images_cdn_base_url",
-  "https://magnacms-bootstrap.invalid/local-images",
-);
 
 const network = new NetworkStack(app, `magnacms-${envName}-network`, {
   env: awsEnv,
