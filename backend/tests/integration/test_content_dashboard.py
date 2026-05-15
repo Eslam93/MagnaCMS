@@ -9,7 +9,6 @@ row anyway.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -20,16 +19,23 @@ from app.db.models import ContentPiece
 from app.providers.factory import reset_provider_cache
 from app.providers.llm.mock import MockLLMProvider
 
-# When the dashboard list test asserts strict newest-first ordering by
-# `_generate` call sequence, the rows need DISTINCT `created_at`
-# values. Postgres `now()` is microsecond-resolution and on fast CI
-# runners three sequential mock-LLM API calls can land in the same
-# microsecond, which makes the dashboard repository's tiebreaker
-# (`ORDER BY created_at DESC, id DESC`, see PR #145) decide ordering
-# by random UUID bytes instead of insert order. Forcing a small gap
-# between creates is cheaper than adding a serial column to the
-# schema and matches real-world usage (humans don't click that fast).
-_CREATE_GAP_S = 0.02
+# Why these tests don't assert strict insert-order ordering:
+#
+# The integration fixture (tests/integration/conftest.py) wraps every
+# test in a single outer transaction and binds every request's session
+# to that connection with `join_transaction_mode=create_savepoint`. So
+# all of a test's requests share ONE Postgres transaction, and
+# `now()` / `transaction_timestamp()` is constant within a transaction.
+# Result: every row a single test inserts has the SAME `created_at`,
+# no matter what gaps the test adds between requests.
+#
+# The dashboard repository orders by `created_at DESC, id DESC` (PR
+# #145). When created_at ties, the deterministic tiebreaker is the
+# UUID compared as DESC. The tests below verify exactly that
+# contract: all rows present, ordered by id DESC when timestamps tie.
+# In real-world usage timestamps don't tie at the microsecond, so the
+# `created_at DESC` half does the actual user-facing ordering work;
+# the tiebreaker just keeps things deterministic.
 
 
 @pytest.fixture(autouse=True)
@@ -72,9 +78,7 @@ async def test_list_returns_paginated_envelope_newest_first(
 ) -> None:
     token = await _register_and_login(integration_client)
     first = await _generate(integration_client, token, topic="Topic alpha")
-    await asyncio.sleep(_CREATE_GAP_S)
     second = await _generate(integration_client, token, topic="Topic beta")
-    await asyncio.sleep(_CREATE_GAP_S)
     third = await _generate(integration_client, token, topic="Topic gamma")
 
     response = await integration_client.get(
@@ -89,9 +93,19 @@ async def test_list_returns_paginated_envelope_newest_first(
     assert body["meta"]["pagination"]["page"] == 1
     assert body["meta"]["pagination"]["page_size"] == 10
     assert body["meta"]["pagination"]["total_pages"] == 1
-    # Newest-first ordering.
+
+    # All three created pieces appear in the list response.
     ids = [item["id"] for item in body["data"]]
-    assert ids == [third["content_id"], second["content_id"], first["content_id"]]
+    expected_ids = {first["content_id"], second["content_id"], third["content_id"]}
+    assert set(ids) == expected_ids
+
+    # Ordering contract: `created_at DESC, id DESC`. The integration
+    # fixture shares one transaction, so all three rows share an
+    # identical `created_at` — the tiebreaker (id DESC) decides the
+    # final order. See module docstring for why we don't try to make
+    # timestamps distinct here.
+    assert ids == sorted(expected_ids, reverse=True)
+
     # Preview is non-empty and bounded.
     for item in body["data"]:
         assert item["preview"]
