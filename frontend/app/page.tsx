@@ -11,10 +11,6 @@ export default function LandingPage() {
         piece paired with an AI-generated image in one flow.
       </p>
       <div className="flex gap-4">
-        {/*
-          Login / register routes land in P2.9b. For now the buttons
-          render but the links are non-functional placeholders.
-        */}
         <Button asChild>
           <Link href="/login">Sign in</Link>
         </Button>
@@ -23,7 +19,8 @@ export default function LandingPage() {
         </Button>
       </div>
       <p className="mt-12 text-sm text-muted-foreground">
-        Phase 2 scaffold — auth pages arrive in the next PR.
+        Try the demo with <span className="font-mono text-foreground">demo@magnacms.dev</span> /{" "}
+        <span className="font-mono text-foreground">DemoPass123</span>.
       </p>
     </main>
   );

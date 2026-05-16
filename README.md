@@ -1,6 +1,6 @@
 # MagnaCMS — AI Content Marketing Suite
 
-A production-grade SaaS that helps marketers generate, manage, and improve marketing content using AI. Every generated piece can be paired with an AI-generated image in one flow.
+A production-minded SaaS demo that helps marketers generate, manage, and improve marketing content using AI. Every generated piece can be paired with an AI-generated image in one flow.
 
 > **Status:** in active development. The repo is functional from day one — see the dev log for what works today vs. what's next.
 
@@ -18,6 +18,22 @@ A production-grade SaaS that helps marketers generate, manage, and improve marke
 | Demo credentials | `demo@magnacms.dev` / `DemoPass123` |
 
 The demo account is seeded with one brand voice, three content pieces (blog / LinkedIn / email), and one improvement so the dashboard renders real rows immediately. Image regeneration runs live against `gpt-image-1` from the UI's image panel; the seed inserts image rows for completeness but the PNG bytes are stranded on the Fargate seed-task's container disk (see [`infra/DEPLOY.md`](./infra/DEPLOY.md) §6a) — the live-regen path produces real `gpt-image-1` 1024×1024 outputs on the App Runner instance and renders correctly. The S3-backed adapter slated for the next deploy batch removes the cross-container caveat. Re-seed locally with `python -m app.scripts.seed` from `backend/`.
+
+## For reviewers
+
+If you're skimming the repo to evaluate engineering judgment, the load-bearing things this project demonstrates are:
+
+- **Full-stack product delivery end-to-end** — Next.js 15 App Router frontend + FastAPI/async-SQLAlchemy backend + Postgres + AWS deploy, every layer shipped and live.
+- **AI provider abstraction** — `ILLMProvider` + `IImageProvider` Protocols with OpenAI, Bedrock-stub, and Mock implementations behind a factory. Swapping providers is a one-class edit.
+- **Three-stage parse fallback** for LLM JSON output (structured outputs → corrective retry → graceful degrade with status banner). Live demos don't surface model-misbehavior errors.
+- **Custom JWT auth** — short-lived access token (in-memory) + httpOnly refresh cookie + rotation + Origin-based CSRF guard. No Cognito.
+- **Async repositories + service-layer architecture** — clean boundaries, single-source-of-truth result projection, FOR UPDATE NOWAIT on image-regen contention.
+- **CI gates** — ruff format + lint, mypy, pytest with 80% coverage gate, openapi-typescript spec validation, prettier, eslint, vitest, `next build`, jest snapshots for every CDK stack.
+- **AWS CDK infrastructure** — five stacks (Network / Data / Compute / Edge / Observability), strict CDK context validation that fails synth on bad endpoint values, App Runner autoscaling explicitly capped to match RDS connection budget.
+- **Honest engineering trade-offs** — every demo-acceptable compromise (public RDS endpoint, local image storage, deferred ElastiCache) is documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md) with the production-grade alternative spelled out.
+- **Living development log** — [`DEVLOG.md`](./DEVLOG.md) captures decisions, rejected reviewer findings (with the reason), and round-on-round refinements as PRs landed.
+
+Suggested reading order: this README → [`ARCHITECTURE.md`](./ARCHITECTURE.md) (one page) → §12 "What I'd add next" below → [`DEVLOG.md`](./DEVLOG.md) newest entry.
 
 ## 2. What it does
 
