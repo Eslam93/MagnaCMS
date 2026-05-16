@@ -4,6 +4,165 @@ A running journal of decisions, trade-offs, and progress on MagnaCMS. Newest ent
 
 ---
 
+## 2026-05-16 — Demo-day docs polish (PR #147)
+
+A small README + ARCHITECTURE pass to close out the P12 finalization checklist before the demo. No code touched.
+
+### README §1 stopped lying about the frontend
+
+The "frontend — coming up — Amplify zip awaiting one-click upload" placeholder was still there until this morning. The frontend has been live at `main.dew27gk9z09jh.amplifyapp.com` since the manual Amplify zip upload last night; §1 now reflects that. The seeded-demo description also got an honesty pass: pre-seeded image rows exist in the DB but their PNG bytes are stranded on the Fargate seed-task container disk (cross-container effect of `LocalImageStorage`), so seeded thumbnails 404. The live regen path produces real `gpt-image-1` outputs on the App Runner instance and renders correctly, so the demo flow is "log in, click Generate image" rather than "see pre-seeded thumbnails."
+
+### §10 documents the actual deploy flow, not the aspirational one
+
+`deploy.yml` exists and uses GitHub-OIDC, but the `AWS_DEPLOY_ROLE_ARN` repo secret isn't configured, so the workflow fails at the `Configure AWS credentials` step. The live deploys were done manually: `docker buildx push` + `aws apprunner start-deployment` for the backend, `aws amplify create-deployment` + presigned-URL zip upload for the frontend (avoids the GitHub→Amplify OAuth that the CDK-created app doesn't expose). §10 now contains those exact commands so future-me doesn't waste an hour rediscovering them, and notes that `deploy.yml` is the eventual target once the OIDC role is wired.
+
+### ARCHITECTURE.md AWS cost table is no longer "TBD"
+
+The table now lists real numbers per current sizing: ~$70/month total. The two largest line items (App Runner always-on at $50, RDS `db.t4g.micro` at $15) are explicitly annotated as intentional trade-offs — scale-to-zero on App Runner would save ~$45/mo but make the first request after idle a 10s cold boot; RDS in a private subnet + RDS Proxy would add ~$15–25/mo in NAT + Proxy charges. The "What's next" section was replaced with the actual roadmap items (S3 adapter, CloudFront, OIDC role wiring, Phase 11 hardening, exports, frontend polish) linked to their GitHub issues, plus a "considered but deferred" section that explicitly lists password reset, the Bedrock migration plan, and multi-tenant scoping as out-of-scope.
+
+---
+
+## 2026-05-15 — Live deploy: first end-to-end production run
+
+The first manual run through `infra/DEPLOY.md` end-to-end, applying every fix from the previous four PRs in order. Three surprises worth recording.
+
+### The CDK-created Amplify app doesn't expose Git-connect in the console
+
+EdgeStack creates the Amplify app and the `main` branch resource, but without a `Repository` property. The current Amplify Gen-2 hosting console (the one served at `console.aws.amazon.com/amplify/apps/<id>`) does not surface a "Connect repository" / "Reconnect branch" button anywhere — `App settings → General` shows the app metadata, `App settings → Branch settings` lists branches, neither lets you attach a Git source after the fact. The path forward was either (a) generate a GitHub PAT and call `aws amplify update-app --repository ... --access-token` from CLI, or (b) skip Git entirely and use the manual-zip path. We went with (b): build locally with `NEXT_OUTPUT=export pnpm build`, zip the `out/` contents (via Python's `zipfile` module — PowerShell's `Compress-Archive` produces backslash-separated paths that Amplify serves as literal filenames, so all `_next/static/chunks/...js` chunks 404'd on the first attempt), then `aws amplify create-deployment` + PUT to the presigned URL + `start-deployment`. Future code updates need a fresh zip each time; the Git connection is a follow-up.
+
+### Fargate task default-SG has no egress rules
+
+The migration task failed at startup with `ResourceInitializationError: ... canceled, context deadline exceeded` trying to fetch the RDS secret. The VPC's default SG has `IpPermissionsEgress: []` (CDK locks down the VPC default SG out of paranoia), so the Fargate task — which uses the default SG when `aws ecs run-task` doesn't pass one explicitly — has no outbound. Fixed by passing the dedicated `magnacms-dev-fargate-egress` SG that already existed for this purpose. `DEPLOY.md` §6 now includes the SG lookup in the runbook so this doesn't bite the next operator.
+
+### `/app/local_images` permission error on first image-gen
+
+The `LocalImageStorage.store()` call tries to `mkdir /app/local_images` on first write. `WORKDIR /app` in the Dockerfile is owned by root with 755 permissions, and the container drops to the non-root `app` user before runtime, so the mkdir bombed with `PermissionError: [Errno 13]`. Caught it via the seed task, which would have surfaced as the first user click anyway. Dockerfile now pre-creates the directory and chowns it to `app` before the USER swap. Goes away when the S3 adapter ships.
+
+### What the smoke test confirmed end-to-end
+
+Login → dashboard with seeded content → generate blog post (real `gpt-5.4-mini-2026-03-17`, 1314 words, staged loader works) → generate LinkedIn post → generate image (real `gpt-image-1`, 1024×1024, ~$0.04) → image renders in the detail modal → improver round-trip with side-by-side diff → brand voice create / edit / delete → soft delete + Undo restore. Cost during the smoke: roughly $0.06 in upstream calls. Total wall time from clean account state to all-flows-verified: about eight minutes.
+
+---
+
+## 2026-05-15 — Deploy correctness pass + CI flake fix (PR #145, #146)
+
+Strict CDK context validation, App Runner autoscaling wired up, DB pool right-sized for the bounded fleet, plus a Dockerfile permission fix and a couple of test-fixture corrections discovered while running the live deploy.
+
+### `requireContext` only checked for a string — `lol` and `https://localhost` passed synth
+
+The PR #144 work made `cors_origins` and `images_cdn_base_url` CDK context required, but the check was just "non-empty string." `-c cors_origins=https://app.example.com/foo` would synth fine — and then the deployed backend's CORS allowlist would contain `https://app.example.com/foo` while the browser's `Origin` header is origin-only, so the CORS check would fail at runtime. Extracted `resolveEndpointContext()` as a pure module with full shape validation: https only, no loopback hosts, no `.invalid` TLD (unless `allow_synthetic_endpoints=true` is set), CSV entries de-duped, trailing slashes stripped, return value canonicalized via `url.origin` so the persisted value matches the browser's `Origin` header byte-for-byte. 19 new unit tests cover every rejection branch; making the resolver a pure function meant they didn't need to instantiate a CDK App.
+
+### `synthetic-endpoints=true` is now loud, not silent
+
+When `-c allow_synthetic_endpoints=true` is used, the app prints a `console.warn` to stderr and tags every resource with `synthetic-endpoints=true`. `cdk.Annotations.of(app).addWarning()` was the first attempt but doesn't bubble up reliably from the App scope in CDK v2 — the CLI walks Stack-scoped annotations only. Stack tags survive into CloudFormation, which is what an operator notices weeks later when they wonder why the demo broke.
+
+### App Runner autoscaling: wired, not just declared
+
+ComputeStack passed `autoScalingConfigurationArn: undefined` and relied on the App Runner per-account default (min 1, max **25**), even though `cfg.apprunnerMinInstances` / `apprunnerMaxInstances` were set to `1` / `3`. The cfg values were silently ignored. Added an explicit `CfnAutoScalingConfiguration` that consumes those values, plus a contract test asserting the resource exists with the expected min/max/concurrency. The 1/3 cap is what the DB pool sizing is now bounded against — without the cap, a fully-scaled-out fleet would have wanted up to 100 concurrent connections against `db.t4g.micro`'s ~87 `max_connections`.
+
+### DB pool right-sized for the new cap
+
+Previously `pool_size=15, max_overflow=20` (up to 35 connections per instance × 3 instances = 105, vs 87 max). Dropped to `pool_size=10, max_overflow=10` (20 per instance × 3 = 60, with ~25 headroom for migrations + admin sessions). Also fixed an overclaim in the docstring: the NOWAIT lock (from PR #144) makes the *losing* image-regen request release its connection immediately, but the *winner* still holds the row lock through ~20s of LLM + image-gen + storage calls. The earlier docstring said "no longer holds a connection across upstream calls" — only the loser doesn't.
+
+### Two integration tests were flaky on Postgres timing
+
+`test_list_returns_paginated_envelope_newest_first` and `test_list_returns_newest_first_with_previews` both create rows in rapid succession and assert strict insert-order ordering. PR #144's `ORDER BY created_at DESC, id DESC` made the order deterministic *when timestamps tie*, but the tests inherited a fragile assumption: Postgres `now()` is `transaction_timestamp()` and the integration fixture wraps every test in a single outer transaction (savepoint-per-session pattern in `tests/integration/conftest.py`), so every row gets an identical `created_at`. With timestamps tied, the deterministic tiebreaker — UUID descending — doesn't match insert order. The first attempt to fix it added `asyncio.sleep(0.02)` between API calls, which doesn't help because the shared-transaction `now()` is constant regardless of wall-clock gaps. The real fix is in the test: assert the actual contract (all IDs returned + ordered by id DESC when timestamps tie), not the assumption (strict insert-order). The user-facing "newest first by `created_at`" contract still works in production where users don't insert multiple rows in one transaction.
+
+### CI format drift — the long-standing red badge cause
+
+Every backend-ci and frontend-ci run since slice-3 had been failing at the formatter step. The lint, type-check, and test gates passed locally, so the failures looked silent unless you specifically opened the workflow runs. Root cause: my local validation loop ran `ruff check` (lint only), not `ruff format --check` (CI gate); same shape on the frontend — `eslint` + `tsc` + `vitest`, but no `prettier --check` and no `next build`. Six backend files and seven frontend files had accumulated format drift. Applied `ruff format` + `prettier --write`, then rewrote README §9 ("Running tests & local CI parity") with the full command set CI actually runs so this doesn't recur. The README is now the source of truth for the verification recipe.
+
+### What didn't ship in this batch
+
+The deploy.yml OIDC role still isn't wired — the workflow exists but the GitHub-OIDC trust relationship and `AWS_DEPLOY_ROLE_ARN` secret aren't configured, so the live deploys this batch were done manually. Tracked as one of the follow-up items in ARCHITECTURE.md's "What's next."
+
+---
+
+## 2026-05-15 — AI-review round 2: deploy regression + observability gaps (PR #144)
+
+Round 2 review surfaced one regression PR #143 introduced (the CDK localhost-CORS default brick) plus four real gaps in the surrounding work. The triage report is in `.private/REVIEW_PROMPT.md`; the executive summary is "the validator I added rejected the CDK defaults the same PR didn't update."
+
+### CDK context now required, no synthetic defaults
+
+The original direction was "ship synthetic placeholders like `https://magnacms-dev.invalid` so the synth never fails." User pushback was correct: that trades a startup/deploy failure for a silent user-visible runtime failure. Now `bin/magnacms.ts` requires `-c cors_origins=...` and `-c images_cdn_base_url=...` for non-local synth; missing values throw with a useful error message. The escape hatch is `-c allow_synthetic_endpoints=true`, which substitutes `https://magnacms-bootstrap.invalid` placeholders for first-bootstrap deploys where the Amplify URL isn't known yet. The placeholders pass the backend's `Settings` validator (so App Runner boots) but fail loudly on the first real request (the browser's CORS check fails noisily, which is the point — bootstrap mode is supposed to be obvious). DEPLOY.md §8 was rewritten: console env-var edits are gone, the only supported path is `cdk deploy magnacms-dev-compute -c cors_origins=... -c images_cdn_base_url=...`.
+
+### CSRF moved inside RequestID so 403s carry observability
+
+The CSRF Origin guard added in PR #143 was wrapping RequestID, which meant a CSRF rejection's 403 envelope had `meta.request_id: null` and the response carried no `X-Request-ID` header. Reorder: `add_middleware(CsrfOriginMiddleware)` BEFORE `add_middleware(RequestIDMiddleware)` — Starlette's reverse-order semantics put CSRF deeper than RequestID, so RequestID wraps CSRF on the way in and on the way out. A new test asserts the 403 response carries `X-Request-ID` so this doesn't regress quietly.
+
+### CSRF scope extended to login + register
+
+`/auth/login` and `/auth/register` join `/auth/refresh` and `/auth/logout` in `_PROTECTED_PATHS`. The threat model isn't the rate-limit DoS the review originally framed (the limiter buckets per real-TCP-peer-IP, so an attacker can't pollute the victim's bucket); it's login-CSRF — attacker forces the victim's browser to log into the attacker's account, then the victim creates content under that identity. Rare but real, two-line fix, ships now.
+
+### Image-regen double-click: NOWAIT + 409, not queue-and-pay
+
+`with_for_update()` was serializing concurrent regenerations but held the row lock — and therefore the DB connection from the small asyncpg pool — through ~20s of LLM + image-gen + storage calls. Two contending users meant two paid generations, separated by a 20s queue. Switched to `with_for_update(nowait=True)` in `ContentRepository.get_for_user`, and the image service translates the resulting Postgres SQLSTATE `55P03` (`lock_not_available`) into a `ConflictError(code="IMAGE_GENERATION_IN_PROGRESS")` → 409. The loser fails fast, the winner doesn't fight for a connection, and the user sees a clear "generation already in progress" message instead of an opaque 20s wait. A unit test mocks the DBAPIError with the right `sqlstate` attribute and asserts the 409 fires. Proper dedupe — a job table that returns the in-flight job ID to subsequent callers — is Phase 11.
+
+### Password schema honesty + Pydantic-level validation
+
+`RegisterRequest` only declared `min_length=8, max_length=128`; the letter/digit/72-byte rules lived in `validate_password_strength` (service layer), so OpenAPI consumers saw the lenient bounds and missed the real constraints. The strength check is now a Pydantic `field_validator` on `RegisterRequest.password` that calls into `core/security.py` (keeping the canonical implementation there), and `max_length` is tightened to 72 to match bcrypt's silent-truncation boundary. `LoginRequest` keeps the lenient max (legacy accounts with weak passwords must still authenticate) but enforces the 72-byte guard via a split-out `validate_bcrypt_password_bytes` helper, so bcrypt's silent truncation can't let a wrong password through.
+
+### Buildx flag conflict that would have broken the next CI deploy
+
+`deploy.yml` had both `--output=type=image,push=false` and `--load` on the buildx command. Buildx rejects multiple outputs; this would have failed at the first push. Dropped `--output=...`; `--load` does the right thing (single-platform, push to local daemon, then `docker push` from there).
+
+### What was deferred
+
+- `generated_images.cdn_url` column cleanup: still written but no longer read for URL construction. Harmless redundancy. A safety-net test now pins the contract that the projection ignores stale row `cdn_url` values; the column gets dropped or nullable-migrated when Phase 9 establishes migration discipline.
+- Strict OpenAPI codegen diff in CI: the spec-validity check landed (CI runs `openapi-typescript` against `app.openapi()` to catch generator-unsafe specs), but the strict `git diff --exit-code` against committed `types/api.d.ts` waits for that file to become generator output instead of a hand-stub.
+
+---
+
+## 2026-05-15 — AI-review round 1: security, storage, deploy hardening (PR #143)
+
+The first cross-codebase AI review. Two GPT-5-family reviewers (independent prompts, blind to each other's output) returned ~20 findings between them. Triage classified each as Must-Fix / Should-Fix / Optional / Reject; the bundle below is everything classified Must-Fix or Should-Fix in a single PR rather than five small ones. Shipping as one PR matches the user's preference for refactors-with-clear-scope and avoids the test-churn cost of touching the same files across multiple rounds.
+
+### CSRF Origin guard on cookie-only POSTs
+
+Refresh-cookie endpoints (`/auth/refresh`, `/auth/logout`) were vulnerable to a low-shaped cross-site POST attack: an attacker page can `fetch("/api/v1/auth/refresh", { credentials: "include" })` because `SameSite=none` (required for cross-domain Amplify↔App Runner) sends the cookie, and force a token rotation (DoS-shaped). The new `CsrfOriginMiddleware` enforces an `Origin` / `Sec-Fetch-Site` allowlist on those routes specifically. No double-submit cookie, no token — just the Origin policy. Allowed shapes: no `Origin` header (curl, server-to-server), `Sec-Fetch-Site: same-origin`, or `Origin` in the configured CORS allowlist. Anything else returns 403 (not 401, to avoid triggering the frontend's refresh-and-retry loop). Bearer-authenticated routes don't need the guard — browsers don't auto-attach the access token from an attacker origin.
+
+### Rate-limit pattern matching for dynamic paths
+
+`/content/{id}/image` and `/improve` were unprotected by the exact-match rate limiter because the path contained a dynamic segment. Added `RateLimitRule` regex matching; image-gen now caps at 6/min and improve at 10/min per (path-pattern, real-TCP-peer-IP). The same bucket-eviction behavior applies — no surprises for clients hitting the legacy exact-match routes.
+
+### Image storage: store key only, derive URL at projection time
+
+`IImageStorage.store()` now returns just the storage key (`<uuid>.png`), and `public_url_for(key)` derives the URL at response-projection time from `IMAGES_CDN_BASE_URL` + key. The router projects every image's `cdn_url` fresh from storage config, so the row's persisted `cdn_url` is now redundant cache rather than authoritative. The point: when the S3 + CloudFront adapter ships in the deploy batch, swapping `LocalImageStorage` for `S3ImageStorage` is a config change and a one-class edit — not a data migration that rewrites every existing row's URL. The persisted `cdn_url` still gets written (backwards-compat for any reader that hasn't switched to the projection path), but old rows projected through the router pick up the new URL automatically.
+
+### Image regen serialized at the DB layer
+
+`SELECT ... FOR UPDATE` on the parent `ContentPiece` row inside the regen transaction prevents two concurrent requests from racing on the partial unique index that guards "at most one current image per piece." The lock is held until commit, which means concurrent regens queue rather than fight. (Round 2 then turned this into a NOWAIT-and-fail-fast pattern — see the next entry.)
+
+### Migration task secrets
+
+The Fargate migration task imports `app.main`, which boots the `Settings` validator. The validator rejects placeholder values for `JWT_SECRET` and `OPENAI_API_KEY` in non-local envs, so the migration task failed at startup with a config-validation error before Alembic ever ran. Fixed by mounting both secrets via `EcsSecret.fromSecretsManager`; the auto-generated IAM grants cover the read.
+
+### App Runner sized up before image-gen OOM
+
+App Runner was provisioned at 0.25 vCPU / 0.5 GB. `gpt-image-1` responses carry a 1–3 MB base64 PNG; with FastAPI + Pydantic + the OpenAI SDK already resident (~200 MB), that's OOM-adjacent under any concurrent image-gen load. Bumped to 1 vCPU / 2 GB, which leaves real headroom without pushing the App Runner pricing tier dramatically.
+
+### ElastiCache dropped from DataStack
+
+The cluster was being provisioned but unreachable: App Runner has no VPC connector, so the in-VPC Redis endpoint never resolves from the backend. The cluster was running, billed, and useless. Yanked from DataStack; the backend's in-memory rate-limit fallback handles the demo load. ElastiCache comes back with the VPC-connector + refresh-token-blocklist work in Phase 11.
+
+### CORS_ORIGINS localhost rejected in non-local envs
+
+Added a `model_validator(mode="after")` to `Settings`: in `dev`/`staging`/`prod`, a `CORS_ORIGINS` value containing `localhost` or `127.0.0.1` is rejected at startup. Catches the class of misconfiguration where someone forgets to update the CORS list before deploy. *(Round 2 then found this validator created its own regression — the CDK defaults still shipped `http://localhost:3000`, so the very next `cdk deploy` would have bricked the App Runner service. Covered in the round-2 entry.)*
+
+### `_RESULT_PROJECTORS` duplication eliminated
+
+The router had a `_RESULT_PROJECTORS` dict that ran a parallel pipeline to the service's renderers — same logic, twice, with one branch tested and the other not. Killed the dict; `ContentService.project_result()` is now the single source of truth. Two state-conflict 422s (`CONTENT_NOT_DELETED`, `RESTORE_WINDOW_EXPIRED`, `CONTENT_NOT_READY_FOR_IMAGE`) became 409s along the way — they're resource-state conflicts, not validation errors.
+
+### Frontend hygiene: cache clear on logout + gen:api actually runs
+
+`useLogoutMutation.onSettled` now calls `queryClient.clear()` so a user who logs out and another user logs in on the same browser don't see cached query results from the first session. The `pnpm gen:api` script was wired but never actually invoked anything; it now runs `openapi-typescript` against the documented `API_SPEC_URL`.
+
+### What was rejected from the review
+
+Three findings didn't survive verification: a "Sentry leaks Authorization headers" claim (Sentry SDK is configured with `send_default_pii=False`, which covers that), a "Zod ↔ Pydantic password drift" claim (schemas match exactly — the frontend Zod schema enforces the same 72-byte rule the backend now uses), and a "requestBodyCache leaks across users" claim that misread `WeakMap` semantics. Documented in the triage report so a future reviewer doesn't re-raise them.
+
+---
+
 ## 2026-05-15 — Demo polish: seed script, account page, READMEs
 
 Five feature slices shipped in 12 hours of local-first work. The final polish pass closes three small loose ends so the deployed demo lands on its feet:
@@ -23,7 +182,7 @@ The README now lists the App Runner URL, the live `/docs` swagger, and the demo 
 ### What didn't ship in this window
 
 - Frontend zip upload to Amplify (one-click, but it's the user's hands)
-- The six deploy-time fixes documented in SLICE_PLAN §4 — em-dash + NoDecode are already in the repo; migration env + Fargate SG land at deploy-prep time
+- The six deploy-time fixes tracked in the slice plan — em-dash + NoDecode are already in the repo; migration env + Fargate SG land at deploy-prep time
 - S3 image-storage adapter (the `IImageStorage` slot is reserved; the local-disk path runs in dev and currently in App Runner too, served by the FastAPI `/local-images` static mount)
 - Streaming SSE on the improver and per-account rate limiting — both explicitly in the cut list
 

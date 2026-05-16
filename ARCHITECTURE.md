@@ -49,20 +49,38 @@ Structured JSON output doesn't stream cleanly. A partial JSON parse is broken UX
 
 ## AWS cost estimate
 
-_Filled in once the infrastructure lands and we have a few days of real traffic data to anchor on._
+Steady-state monthly figures for the dev stack as currently deployed (us-east-1, single environment, min=1 always-on App Runner instance). Numbers from the AWS pricing pages; assumes ~10–50 demo sessions/week and no production traffic. Updates as real CloudWatch billing accumulates.
 
-| Service | Estimate (per week) |
-|---|---|
-| App Runner (0.25 vCPU / 0.5 GB, min 1) | — |
-| RDS `db.t4g.micro` + 20 GB gp3 | — |
-| ElastiCache Serverless Redis | — |
-| S3 + CloudFront (low traffic) | — |
-| Amplify Hosting | — |
-| Secrets Manager (3 secrets) | — |
-| CloudWatch Logs (30-day retention) | — |
-| **OpenAI (separate budget)** | ~$3–8 per active week |
-| **Total AWS** | _TBD_ |
+| Service | Sizing | Monthly cost (USD) |
+|---|---|---|
+| App Runner | 1 vCPU / 2 GB, autoscale min 1 / max 3, concurrency 80 | ~$50 (one instance always-on; CPU/memory bumped after the hardening pass — `gpt-image-1` responses were OOM-adjacent at 0.25 vCPU / 0.5 GB) |
+| RDS Postgres | `db.t4g.micro`, 20 GB gp3, public endpoint, 0-day backup retention (dev) | ~$15 (~$13 instance + ~$2 storage) |
+| S3 (images bucket) | Empty until the S3 adapter ships (Phase 5); object-storage line stays near $0 | ~$0 |
+| Amplify Hosting | Static export, 1–3 zip deploys/day during active dev | <$1 |
+| Secrets Manager | 3 secrets (RDS, JWT, OpenAI) at $0.40/secret/mo | ~$1.20 |
+| CloudWatch Logs | App Runner + Fargate task logs, 14-day retention, ~50 MB/day | ~$2 |
+| ECR | Backend image ~250 MB, lifecycle policy keeps last 10 tags | <$1 |
+| NAT Gateway | **Not used** — App Runner runs with `egressType: DEFAULT` (public egress) | $0 |
+| ElastiCache | **Deferred to Phase 11** | $0 |
+| CloudFront | **Deferred to Phase 5** (images served via App Runner's `/local-images` until then) | $0 |
+| **Total AWS** | | **~$70/month** |
+| **OpenAI** (separate budget) | `gpt-5.4-mini` ~$0.005 per content piece, `gpt-image-1` medium ~$0.04 per image | ~$3–8/active week |
+
+The two largest dev-stack line items (App Runner at always-on, RDS at `db.t4g.micro`) are both intentional trade-offs. App Runner's min=1 keeps cold-start latency off the demo path; scale-to-zero would save ~$45/mo but make the first request after idle period unusable (~10s cold boot). The RDS public endpoint is gated by `rds.force_ssl=1` + a strong auto-generated password (see decision #3 above); private subnet + RDS Proxy is the production-grade configuration and adds ~$15–25/mo in NAT + Proxy charges.
 
 ## What's next
 
-_Filled in once the core flows are shipping. Priority extras under consideration: password reset, A/B prompt testing, content calendar, Nova Image v2 migration plan (Nova Canvas EOL 2026-09-30)._
+Tracked on the [GitHub issue board](https://github.com/Eslam93/MagnaCMS/issues) under labels `priority:critical` and `priority:high`. Ordered by impact:
+
+1. **S3 image storage adapter** ([#49](https://github.com/Eslam93/MagnaCMS/issues/49)) — swaps `LocalImageStorage` for `S3ImageStorage` behind the same `IImageStorage` protocol. Removes the cross-container caveat where Fargate-seeded images don't reach App Runner. Backend-only change; the swap is a one-class edit and a config flag.
+2. **CloudFront in front of S3** — public-read distribution with signed-URL option for protected images. Drops App Runner egress costs and adds CDN caching.
+3. **OIDC role for `deploy.yml`** — replaces the current manual `docker push` + `aws amplify create-deployment` flow with the existing workflow once the IAM trust relationship is wired.
+4. **Phase 11 hardening** ([#88](https://github.com/Eslam93/MagnaCMS/issues/88), [#89](https://github.com/Eslam93/MagnaCMS/issues/89), [#90](https://github.com/Eslam93/MagnaCMS/issues/90)) — Redis blocklist for refresh tokens, idempotency middleware, per-endpoint rate limit tuning. All require the VPC connector that's currently deferred.
+5. **Exports** ([#73](https://github.com/Eslam93/MagnaCMS/issues/73), [#74](https://github.com/Eslam93/MagnaCMS/issues/74), [#75](https://github.com/Eslam93/MagnaCMS/issues/75)) — `GET /content/:id/export?format=pdf|docx|markdown`. Reuses the same `rendered_text` field the dashboard previews.
+6. **Frontend polish** ([#79](https://github.com/Eslam93/MagnaCMS/issues/79)–[#87](https://github.com/Eslam93/MagnaCMS/issues/87)) — error boundaries, empty states, 404/500 pages, mobile responsive audit, accessibility pass, dark mode polish, loading skeletons.
+
+Considered but explicitly deferred to keep the surface area honest:
+
+- **Password reset / email verification** — would need an SES domain identity and a transactional template; out of scope for the demo deliverable.
+- **AWS Bedrock Nova Canvas migration plan** — Nova Canvas is `LEGACY` with EOL **2026-09-30**. `gpt-image-1` is the only image-gen path today; if Bedrock becomes cheaper or required, the `IImageProvider` interface accepts a one-class swap (see `app/providers/image/bedrock.py` stub).
+- **Multi-tenant** — current auth is per-user. Org/workspace scoping would touch every owner-filter in the repositories; not on the roadmap.

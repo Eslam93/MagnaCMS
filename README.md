@@ -12,12 +12,12 @@ A production-grade SaaS that helps marketers generate, manage, and improve marke
 
 | | |
 |---|---|
+| Frontend | <https://main.dew27gk9z09jh.amplifyapp.com> |
 | Backend API | <https://grsv8u4uit.us-east-1.awsapprunner.com> (health: `/api/v1/health`) |
 | API docs | <https://grsv8u4uit.us-east-1.awsapprunner.com/docs> (Swagger UI — exposed in `local` and `dev` envs only; `staging`/`production` hide `/docs`, `/redoc`, and `/openapi.json`) |
-| Frontend | _Coming up — Amplify zip awaiting one-click upload._ Until then, run locally and point it at the deployed API via `NEXT_PUBLIC_API_BASE_URL`. |
 | Demo credentials | `demo@magnacms.dev` / `DemoPass123` |
 
-The demo account is seeded with one brand voice, three content pieces (blog / LinkedIn / email), one image per piece, and one improvement so the dashboard and detail views render real rows immediately. Seed it from scratch with `python -m app.scripts.seed` from `backend/`.
+The demo account is seeded with one brand voice, three content pieces (blog / LinkedIn / email), and one improvement so the dashboard renders real rows immediately. Image regeneration runs live against `gpt-image-1` from the UI's image panel; the seed inserts image rows for completeness but the PNG bytes are stranded on the Fargate seed-task's container disk (see [`infra/DEPLOY.md`](./infra/DEPLOY.md) §6a) — the live-regen path produces real `gpt-image-1` 1024×1024 outputs on the App Runner instance and renders correctly. The S3-backed adapter slated for the next deploy batch removes the cross-container caveat. Re-seed locally with `python -m app.scripts.seed` from `backend/`.
 
 ## 2. What it does
 
@@ -39,7 +39,7 @@ Five core flows:
 | Cache / rate limit / idempotency | Redis 7 _(plumbed in `.env.example`; backend runs with the in-memory fallback today — `USE_REDIS=false`. ElastiCache provisioning is deferred until the VPC-connector + refresh-token-blocklist work in Phase 11.)_ |
 | AI — text | OpenAI `gpt-5.4-mini-2026-03-17` |
 | AI — image | OpenAI `gpt-image-1` |
-| Object storage | S3 bucket provisioned (BlockPublic + SSE) _(generated images currently live on the App Runner local disk via `IImageStorage` → `LocalImageStorage`; the S3 + CloudFront adapter swap lands with the next deploy batch — see [`SLICE_PLAN.md`](./SLICE_PLAN.md) §4.)_ |
+| Object storage | S3 bucket provisioned (BlockPublic + SSE) _(generated images currently live on the App Runner local disk via `IImageStorage` → `LocalImageStorage`; the S3 + CloudFront adapter swap is tracked in [#49](https://github.com/Eslam93/MagnaCMS/issues/49).)_ |
 | Auth | Custom JWT (httpOnly refresh cookie + rotation + Origin-based CSRF guard) |
 | Hosting | AWS App Runner (backend) + Amplify Hosting (frontend) + RDS Postgres _(ElastiCache Serverless Redis lights up with Phase 11 — wired in NetworkStack, not yet provisioned.)_ |
 | Infra-as-code | AWS CDK in TypeScript |
@@ -261,9 +261,40 @@ npx cdk deploy --all -c env=dev
 # IP-identity preflight (DEPLOY.md step 8 — critical)
 ```
 
-### Subsequent deploys (automatic)
+### Subsequent deploys
 
-`.github/workflows/deploy.yml` is `workflow_dispatch`-only until the first manual deploy + IP-identity preflight pass. After that, flip the trigger to `on: push: main` for auto-deploy on backend changes. The workflow uses OIDC-assumed roles (no long-lived AWS keys in GitHub Secrets).
+`.github/workflows/deploy.yml` is `workflow_dispatch`-only and uses an OIDC-assumed role (no long-lived AWS keys in GitHub Secrets). The OIDC trust relationship + `AWS_DEPLOY_ROLE_ARN` repo secret aren't yet configured, so until that's wired the deploy path is manual:
+
+```bash
+# Manual deploy (current path) — full sequence in infra/DEPLOY.md
+ECR_URI=$(aws ecr describe-repositories --repository-names magnacms-dev-backend --query 'repositories[0].repositoryUri' --output text)
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_URI"
+docker buildx build --platform linux/amd64 --provenance=false \
+  -t "$ECR_URI:$(git rev-parse --short HEAD)" -t "$ECR_URI:latest" --load backend/
+docker push "$ECR_URI:$(git rev-parse --short HEAD)"
+docker push "$ECR_URI:latest"
+# Run alembic via the migration Fargate task (DEPLOY.md §6 has the full command)
+APPRUNNER_ARN=$(aws cloudformation describe-stacks --stack-name magnacms-dev-compute \
+  --query "Stacks[0].Outputs[?ExportName=='magnacms-dev-compute-apprunner-service-arn'].OutputValue" --output text)
+aws apprunner start-deployment --service-arn "$APPRUNNER_ARN"
+```
+
+Frontend deploys via `aws amplify create-deployment` + presigned-URL zip upload (avoids needing GitHub→Amplify OAuth):
+
+```bash
+cd frontend
+NEXT_OUTPUT=export NEXT_PUBLIC_API_BASE_URL=<api-base> pnpm build
+python -c "import os, zipfile; root='out'; \
+  z = zipfile.ZipFile('magnacms-frontend.zip','w',zipfile.ZIP_DEFLATED); \
+  [z.write(os.path.join(d,f), os.path.relpath(os.path.join(d,f), root).replace(os.sep,'/')) \
+   for d,_,files in os.walk(root) for f in files]; z.close()"
+CREATE=$(aws amplify create-deployment --app-id dew27gk9z09jh --branch-name main)
+ZIP_URL=$(echo "$CREATE" | jq -r '.zipUploadUrl'); JOB_ID=$(echo "$CREATE" | jq -r '.jobId')
+curl -fsS -X PUT --data-binary @magnacms-frontend.zip "$ZIP_URL"
+aws amplify start-deployment --app-id dew27gk9z09jh --branch-name main --job-id "$JOB_ID"
+```
+
+Once the OIDC role is wired, `deploy.yml` (manual or push-triggered) supersedes both of the above.
 
 ### CI gates (no AWS touch)
 
@@ -291,10 +322,42 @@ Detailed in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Headlines:
 - **Custom JWT over Cognito** — full control over refresh rotation + Redis blocklist; smaller IAM surface.
 - **Non-streaming content generation** — structured JSON outputs don't stream cleanly; staged loading UI gives the perceived-performance benefit without the bug surface.
 
-## 12. Development log
+## 12. What I'd add next
+
+If the clock kept running, in priority order:
+
+### Deploy-batch follow-ups (1–2 days of work each)
+
+1. **S3-backed `IImageStorage` adapter** ([#49](https://github.com/Eslam93/MagnaCMS/issues/49)). The protocol seam already exists — `LocalImageStorage` lives behind `IImageStorage`, and the projection layer already builds image URLs from `s3_key` + storage config at response time (not from a persisted `cdn_url`). The swap is a one-class implementation (`S3ImageStorage` calling `boto3.upload_fileobj`), a config flag, and an alembic-safe column-nullable migration. Removes the only known limitation in the demo flow (the cross-container caveat where Fargate-seeded image bytes never reach the App Runner instance).
+2. **CloudFront in front of S3.** Public-read distribution with signed-URL option for protected images. Drops App Runner egress charges, adds CDN caching, and the existing `IMAGES_CDN_BASE_URL` env var already isolates the change to a CDK + config update — no application code needs to know.
+3. **Real OIDC role for `deploy.yml`** so the manual `docker push` + `aws apprunner start-deployment` + `aws amplify create-deployment` dance becomes one workflow click. The workflow exists but the IAM trust relationship isn't wired; ~30 min of one-time AWS setup.
+
+### Submission-bonus items
+
+4. **Markdown export** for content pieces ([#75](https://github.com/Eslam93/MagnaCMS/issues/75), size:S). The brief asks for view/copy/**download**/delete in the dashboard; download isn't shipped. Markdown lift is small because `rendered_text` is already the canonical Markdown — it's a `GET /content/:id/export?format=md` route + a download button. PDF/DOCX exports are the bigger lift; tracked separately as [#73](https://github.com/Eslam93/MagnaCMS/issues/73) / [#74](https://github.com/Eslam93/MagnaCMS/issues/74).
+
+### Production hardening (Phase 11 — VPC connector territory)
+
+5. **Move RDS into a private subnet + add RDS Proxy + IAM-auth.** The current `0.0.0.0/0` SG + `rds.force_ssl=1` + strong-password posture is acceptable for a demo behind custom auth with no regulated data; not production-grade. Requires an App Runner VPC connector (~$32/mo NAT or per-service VPC endpoints), so this also unlocks ElastiCache (which is provisioned in the network stack but not in the data stack — see PR #143's removal).
+6. **Redis-backed refresh-token blocklist** ([#88](https://github.com/Eslam93/MagnaCMS/issues/88)) and **idempotency middleware** ([#89](https://github.com/Eslam93/MagnaCMS/issues/89)) — both wait on the VPC connector. Today's in-memory fallback covers the demo but won't survive App Runner instance restarts.
+7. **Job-table dedupe for image regeneration.** PR #144 added a NOWAIT lock that fails the second concurrent request fast with `409 IMAGE_GENERATION_IN_PROGRESS`, but the winner still holds the DB connection through ~20s of upstream LLM + image-gen + storage calls. The proper fix is a `generation_jobs` table with the in-flight job ID returned to subsequent callers; out of scope while the demo budget is small.
+
+### Frontend polish I'd want before "ship to real marketing teams"
+
+8. **Loading skeletons** on the dashboard and detail modal ([#87](https://github.com/Eslam93/MagnaCMS/issues/87)). Today the dashboard shows "Loading…" text — fine for a demo, jarring in a real product.
+9. **Mobile responsive pass** ([#84](https://github.com/Eslam93/MagnaCMS/issues/84)). The layout works on a phone but the dashboard cards are awkward; needs a sweep, not a redesign.
+10. **Accessibility audit** ([#85](https://github.com/Eslam93/MagnaCMS/issues/85)). Buttons are keyboard-reachable and the form inputs have proper labels, but I haven't run axe or screen-readered the flows.
+
+### Explicitly deferred (not on the roadmap)
+
+- **Password reset / email verification.** Would need an SES domain identity and transactional templates — out of scope for the deliverable. Users who forget their password today get told to re-register; not great, intentional.
+- **AWS Bedrock Nova Canvas migration plan.** Nova Canvas is `LEGACY` with EOL **2026-09-30**, so the longer-term migration is "wait for Nova Image v2." `gpt-image-1` is the only image-gen path today; if Bedrock becomes cheaper or required, the `IImageProvider` interface accepts a one-class swap (the Bedrock stub is already in `app/providers/image/bedrock.py`).
+- **Multi-tenant / org scoping.** Current auth is per-user. Org/workspace scoping would touch every owner-filter in the repositories — not on the roadmap unless a real customer asks.
+
+## 13. Development log
 
 See [`DEVLOG.md`](./DEVLOG.md) — an ongoing journal of decisions, trade-offs, and progress (newest entries first). Includes actual elapsed time per phase as the project moves forward.
 
-## 13. License
+## 14. License
 
 [MIT](./LICENSE).
