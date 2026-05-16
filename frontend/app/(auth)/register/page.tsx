@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 
-import { Button } from "@/components/ui/button";
+import { Alert, Button } from "@/components/ui/v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useRegisterMutation } from "@/lib/auth/hooks";
@@ -87,17 +87,16 @@ export default function RegisterPage() {
           )}
         </div>
 
-        {mutation.isError ? (
-          <p
-            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-            role="alert"
-          >
-            {mutation.error.message}
-          </p>
-        ) : null}
+        {mutation.isError ? <Alert variant="destructive">{mutation.error.message}</Alert> : null}
 
-        <Button type="submit" className="w-full" disabled={isSubmitting || mutation.isPending}>
-          {mutation.isPending ? "Creating account…" : "Create account"}
+        <Button
+          type="submit"
+          variant="brand"
+          className="w-full"
+          disabled={isSubmitting}
+          loading={mutation.isPending}
+        >
+          Create account
         </Button>
       </form>
 

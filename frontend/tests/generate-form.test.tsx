@@ -223,7 +223,11 @@ describe("GenerateForm", () => {
     };
     renderWithProviders(<GenerateForm />);
     expect(screen.getByTestId("generate-error")).toHaveTextContent("Too many requests");
-    await user.click(screen.getByTestId("generate-error-dismiss"));
+    // v2 Alert renders its dismiss button with aria-label="Dismiss" instead
+    // of a custom test-id. Scope the lookup to the alert so we hit the right
+    // button if a future toast also gets one.
+    const errorAlert = screen.getByTestId("generate-error");
+    await user.click(within(errorAlert).getByRole("button", { name: /dismiss/i }));
     await waitFor(() => expect(mockReset).toHaveBeenCalled());
   });
 });

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 
 import { ImagePanel } from "@/components/features/image-panel";
 import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/v2";
 
 import type { GenerateResponse } from "@/lib/content/hooks";
 
@@ -56,13 +57,9 @@ export function GenerateResult({ data }: { data: GenerateResponse }) {
       </header>
 
       {isDegraded ? (
-        <p
-          className="rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-          role="status"
-        >
-          Generated in fallback mode — formatting may be inconsistent. The raw model output is shown
-          below.
-        </p>
+        <Alert variant="warning" title="Generated in fallback mode">
+          Formatting may be inconsistent — the raw model output is shown below.
+        </Alert>
       ) : null}
 
       <div

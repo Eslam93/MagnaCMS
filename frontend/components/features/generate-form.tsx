@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 
-import { Button } from "@/components/ui/button";
+import { Alert, Button } from "@/components/ui/v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -142,31 +142,23 @@ export function GenerateForm() {
         </div>
 
         {mutation.isError ? (
-          <p
-            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-            role="alert"
+          <Alert
+            variant="destructive"
+            onDismiss={() => mutation.reset()}
             data-testid="generate-error"
           >
             {mutation.error.message}
-            <Button
-              type="button"
-              variant="link"
-              className="ml-2 h-auto p-0 text-sm"
-              onClick={() => mutation.reset()}
-              data-testid="generate-error-dismiss"
-            >
-              Dismiss
-            </Button>
-          </p>
+          </Alert>
         ) : null}
 
         <Button
           type="submit"
+          variant="brand"
           className="w-full sm:w-auto"
-          disabled={isPending}
+          loading={isPending}
           data-testid="generate-submit"
         >
-          {isPending ? "Generating…" : "Generate"}
+          Generate
         </Button>
       </form>
 

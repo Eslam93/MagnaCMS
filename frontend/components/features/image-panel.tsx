@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/v2";
 import { Label } from "@/components/ui/label";
 
 import {
@@ -88,11 +88,13 @@ export function ImagePanel({ contentId, disabled, className }: Props) {
         </div>
         <Button
           type="button"
+          variant="brand"
           onClick={handleGenerate}
-          disabled={disabled || isPending}
+          disabled={disabled}
+          loading={isPending}
           data-testid="image-generate"
         >
-          {isPending ? "Generating…" : hasAnyImage ? "Regenerate" : "Generate image"}
+          {hasAnyImage ? "Regenerate" : "Generate image"}
         </Button>
       </div>
 

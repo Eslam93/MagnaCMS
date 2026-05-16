@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -162,8 +162,8 @@ export function BrandVoiceForm({ initial, onSaved, onCancel }: Props) {
         />
       </div>
       <div className="flex gap-2">
-        <Button type="submit" disabled={isPending} data-testid="bv-submit">
-          {isPending ? "Saving…" : isEdit ? "Save changes" : "Create"}
+        <Button type="submit" variant="brand" loading={isPending} data-testid="bv-submit">
+          {isEdit ? "Save changes" : "Create"}
         </Button>
         <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
           Cancel
