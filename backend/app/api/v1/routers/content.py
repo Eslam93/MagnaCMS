@@ -13,7 +13,8 @@ import uuid
 from math import ceil
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query, status
+from fastapi import APIRouter, Path, Query, Response, status
+from fastapi.responses import PlainTextResponse
 
 from app.api.v1.deps import CurrentUser
 from app.core.exceptions import ConflictError, NotFoundError
@@ -41,6 +42,7 @@ from app.schemas.image import (
     ImageListResponse,
 )
 from app.services.content_service import ContentService, project_result
+from app.services.export_service import build_markdown, filename_for
 from app.services.image_service import ImageService
 from app.services.image_storage import IImageStorage, build_image_storage
 
@@ -208,6 +210,61 @@ async def get_content(
         model_id=piece.model_id,
         created_at=piece.created_at,
         deleted_at=piece.deleted_at,
+    )
+
+
+@router.get(
+    "/{content_id}/export",
+    response_class=PlainTextResponse,
+    summary="Export a content piece as Markdown.",
+    responses={
+        200: {
+            "content": {"text/markdown": {}},
+            "description": "Markdown file with `Content-Disposition: attachment`.",
+        }
+    },
+)
+async def export_content(
+    content_id: Annotated[uuid.UUID, Path()],
+    current_user: CurrentUser,
+    db: DbSession,
+    export_format: Annotated[
+        str,
+        Query(
+            alias="format",
+            description="Export format. Only `md` is supported today; "
+            "`pdf` and `docx` are tracked in issues #73 / #74.",
+            pattern="^md$",
+        ),
+    ] = "md",
+) -> Response:
+    """Download the content piece as a Markdown file.
+
+    The body is `rendered_text` (already canonical Markdown — the
+    renderer ran at write time in Slice 2) wrapped with a small header
+    that carries metadata (topic, type, model, generated-at) and an
+    optional trailing image embed if the piece has a current image.
+
+    `format` exists for forward-compat with PDF/DOCX exports; today
+    only `md` is accepted and a value mismatch returns 422.
+    """
+    del export_format  # validated by FastAPI; only one supported value today
+    repo = ContentRepository(db)
+    piece = await repo.get_for_user(content_id, current_user.id)
+    if piece is None:
+        raise NotFoundError("Content not found.", code="CONTENT_NOT_FOUND")
+    image_repo = ImageRepository(db)
+    current_image = await image_repo.get_current_for_content(piece.id)
+    storage = build_image_storage()
+    image_url = storage.public_url_for(current_image.s3_key) if current_image else None
+    body = build_markdown(piece, current_image, image_public_url=image_url)
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename_for(piece)}"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
