@@ -70,7 +70,7 @@ The two largest dev-stack line items (App Runner at always-on, RDS at `db.t4g.mi
 
 ## What's next
 
-Tracked in [SLICE_PLAN.md](./SLICE_PLAN.md) §4 (deploy batch) and the [GitHub issue board](https://github.com/Eslam93/MagnaCMS/issues) under labels `priority:critical` and `priority:high`. Ordered by impact:
+Tracked on the [GitHub issue board](https://github.com/Eslam93/MagnaCMS/issues) under labels `priority:critical` and `priority:high`. Ordered by impact:
 
 1. **S3 image storage adapter** ([#49](https://github.com/Eslam93/MagnaCMS/issues/49)) — swaps `LocalImageStorage` for `S3ImageStorage` behind the same `IImageStorage` protocol. Removes the cross-container caveat where Fargate-seeded images don't reach App Runner. Backend-only change; the swap is a one-class edit and a config flag.
 2. **CloudFront in front of S3** — public-read distribution with signed-URL option for protected images. Drops App Runner egress costs and adds CDN caching.

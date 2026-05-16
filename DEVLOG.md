@@ -182,7 +182,7 @@ The README now lists the App Runner URL, the live `/docs` swagger, and the demo 
 ### What didn't ship in this window
 
 - Frontend zip upload to Amplify (one-click, but it's the user's hands)
-- The six deploy-time fixes documented in SLICE_PLAN §4 — em-dash + NoDecode are already in the repo; migration env + Fargate SG land at deploy-prep time
+- The six deploy-time fixes tracked in the slice plan — em-dash + NoDecode are already in the repo; migration env + Fargate SG land at deploy-prep time
 - S3 image-storage adapter (the `IImageStorage` slot is reserved; the local-disk path runs in dev and currently in App Runner too, served by the FastAPI `/local-images` static mount)
 - Streaming SSE on the improver and per-account rate limiting — both explicitly in the cut list
 
