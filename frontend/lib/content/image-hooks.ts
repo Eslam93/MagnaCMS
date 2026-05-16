@@ -47,9 +47,13 @@ export interface ImageGenerateInput {
 }
 
 /**
- * Generate (or regenerate) the image for a content piece. The success
- * payload is the new image row; we invalidate the per-piece image
- * list so the panel re-fetches and surfaces the new "current".
+ * Generate (or regenerate) the image for a content piece. On success we
+ * write the new image directly into the list cache and flip any prior
+ * `is_current=true` row to `false`. Pure invalidation caused a visible
+ * gap: the panel uses `list.data` to decide what to render, so during
+ * the refetch window the newly-generated image was momentarily absent
+ * and the panel flashed empty before the refetch landed. Optimistic
+ * cache write closes that gap.
  */
 export function useImageGenerateMutation() {
   const queryClient = useQueryClient();
@@ -64,8 +68,12 @@ export function useImageGenerateMutation() {
       }
       return data.image;
     },
-    onSuccess: (_image, { contentId }) => {
-      queryClient.invalidateQueries({ queryKey: ["content", "images", contentId] });
+    onSuccess: (image, { contentId }) => {
+      queryClient.setQueryData<ImageListResponse>(["content", "images", contentId], (prev) => {
+        const prior = prev?.data ?? [];
+        const demoted = prior.map((row) => (row.is_current ? { ...row, is_current: false } : row));
+        return { data: [image, ...demoted] };
+      });
     },
   });
 }
