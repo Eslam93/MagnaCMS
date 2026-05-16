@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { ImproveResult } from "@/components/features/improve-result";
-import { Button } from "@/components/ui/button";
+import { Alert, Button } from "@/components/ui/v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -105,35 +105,23 @@ export function ImproveForm() {
         </div>
 
         {submitError ? (
-          <p
-            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-            role="alert"
-            data-testid="improve-validation"
-          >
+          <Alert variant="destructive" data-testid="improve-validation">
             {submitError}
-          </p>
+          </Alert>
         ) : null}
 
         {mutation.isError ? (
-          <p
-            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-            role="alert"
+          <Alert
+            variant="destructive"
+            onDismiss={() => mutation.reset()}
             data-testid="improve-error"
           >
             {mutation.error.message}
-            <Button
-              type="button"
-              variant="link"
-              className="ml-2 h-auto p-0 text-sm"
-              onClick={() => mutation.reset()}
-            >
-              Dismiss
-            </Button>
-          </p>
+          </Alert>
         ) : null}
 
-        <Button type="submit" disabled={isPending} data-testid="improve-submit">
-          {isPending ? "Improving…" : "Improve"}
+        <Button type="submit" variant="brand" loading={isPending} data-testid="improve-submit">
+          Improve
         </Button>
       </form>
 

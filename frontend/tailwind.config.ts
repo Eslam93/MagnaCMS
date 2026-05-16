@@ -1,5 +1,7 @@
 import type { Config } from "tailwindcss";
 
+import { v2Tokens } from "./components/ui/v2/tailwind.tokens";
+
 const config: Config = {
   darkMode: "class",
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
@@ -42,7 +44,16 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // v2 additive colors — brand, semantic states, surfaces.
+        // No v1 key is overwritten; v2 components opt-in by importing
+        // from `@/components/ui/v2`. See components/ui/v2/README.md.
+        ...v2Tokens.colors,
       },
+      boxShadow: v2Tokens.boxShadow,
+      transitionDuration: v2Tokens.transitionDuration,
+      transitionTimingFunction: v2Tokens.transitionTimingFunction,
+      ringColor: v2Tokens.ringColor,
+      ringOffsetColor: v2Tokens.ringOffsetColor,
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
